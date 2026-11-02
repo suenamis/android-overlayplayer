@@ -14,12 +14,15 @@ bearbeitet, dann abgehakt. Diese Liste ist Sues Prüfstein, nicht Claudes Notizz
 | Overlay frei auf dem Bildschirm verschieben | 2026-11-02 | ✅ erledigt |
 | Antworten auf die drei Entscheidungen, Sicherung auf GitHub | 2026-11-02 | ✅ erledigt |
 | Installationslink über bums per Tailscale | 2026-11-02 | ✅ erledigt, Link nachgeprüft |
-| Importierte Datei zeigt Buchstaben-Zahlen-Kombination statt Dateiname | 2026-11-02 | 🟡 Version 1.1.1 gebaut und getestet, Ausrollen wartet auf Sues Ansage |
+| Importierte Datei zeigt Buchstaben-Zahlen-Kombination statt Dateiname | 2026-11-02 | 🟡 Version 1.1.1 seit 2026-11-02 auf bums, Test auf Sues Handy steht aus |
 | Kosten einer Veröffentlichung im Play Store | 2026-11-02 | ✅ beantwortet |
 
 ## Aufgaben
 
 ### 🟡 Falscher Dateiname nach dem Import (Sue, 2026-11-02)
+
+Ansage zu Version 1.1.1, wörtlich: „ausrollen" (Antwort auf die Frage nach Ausrollen und Sicherung
+auf GitHub).
 
 Wörtlich: „Ok, also das Update sieht schon mal ganz gut aus und auch viel, viel besser. Die Sachen
 wurden umgesetzt, aber die Datei, die ich importiert habe, hat nicht den Namen der Datei, die ich
