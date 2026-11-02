@@ -53,6 +53,7 @@ class AudioPlayerService : Service() {
         const val ACTION_SHOW_OVERLAY = "com.example.overlay_player.SHOW_OVERLAY"
         const val ACTION_HIDE_OVERLAY = "com.example.overlay_player.HIDE_OVERLAY"
         const val ACTION_SAVE_POSITION = "com.example.overlay_player.SAVE_POSITION"
+        const val ACTION_SET_TITLE = "com.example.overlay_player.SET_TITLE"
         const val EXTRA_URI = "extra_uri"
         const val EXTRA_TITLE = "extra_title"
         const val PREFS_NAME = "overlay_player_prefs"
@@ -127,6 +128,11 @@ class AudioPlayerService : Service() {
             ACTION_SHOW_OVERLAY -> showOverlay()
             ACTION_HIDE_OVERLAY -> hideOverlay()
             ACTION_SAVE_POSITION -> savePosition()
+            ACTION_SET_TITLE -> {
+                currentTitle = intent.getStringExtra(EXTRA_TITLE) ?: currentTitle
+                tvTitle?.text = currentTitle
+                updateNotification()
+            }
         }
         return START_STICKY
     }

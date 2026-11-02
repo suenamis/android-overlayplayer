@@ -13,8 +13,63 @@ bearbeitet, dann abgehakt. Diese Liste ist Sues Prüfstein, nicht Claudes Notizz
 | App-Icon | 2026-11-02 | ✅ von Sue abgenommen |
 | Overlay frei auf dem Bildschirm verschieben | 2026-11-02 | ✅ erledigt |
 | Antworten auf die drei Entscheidungen, Sicherung auf GitHub | 2026-11-02 | ✅ erledigt |
+| Installationslink über bums per Tailscale | 2026-11-02 | ✅ erledigt, Link nachgeprüft |
+| Importierte Datei zeigt Buchstaben-Zahlen-Kombination statt Dateiname | 2026-11-02 | 🟡 Version 1.1.1 gebaut und getestet, Ausrollen wartet auf Sues Ansage |
+| Kosten einer Veröffentlichung im Play Store | 2026-11-02 | ✅ beantwortet |
 
 ## Aufgaben
+
+### 🟡 Falscher Dateiname nach dem Import (Sue, 2026-11-02)
+
+Wörtlich: „Ok, also das Update sieht schon mal ganz gut aus und auch viel, viel besser. Die Sachen
+wurden umgesetzt, aber die Datei, die ich importiert habe, hat nicht den Namen der Datei, die ich
+importiert habe, sondern eine ganz komische Buchstaben- und Zahlenkombination. Dadurch weiß ich ja
+dann gar nicht wirklich, ob ich gerade die richtige Datei habe. Wann liegt das denn? Kannst du das
+bitte lösen?"
+
+Die Meldung kam in der Sitzung der Webseite sue-prise.de an. Zugeordnet zum Overlay Player, weil
+dort zuletzt ein Update ausgeliefert wurde und nur diese App Dateien importiert.
+
+Ursache: Die App übernimmt den Namen, den die Dateiquelle meldet, und fiel bei fehlender Angabe auf
+die interne Kennung zurück. Welche Quelle es bei Sue war, ist nicht nachgewiesen und nicht
+nachgestellt; Androids Dateiauswahl liefert sonst den echten Namen. Deshalb gibt es zwei Wege:
+
+- **Erkennung (von der Sitzung Sue-Prise.de, geprüft und übernommen):** Sieht ein Name wie eine
+  Kennung aus, nimmt die App den Titel aus der Audiodatei, auch für schon gespeicherte Einträge.
+- **Umbenennen (neu):** Stift-Knopf je Eintrag. Ändert nur den Namen in der Liste, nie die Datei.
+  Greift auch dann, wenn die Erkennung nicht zutrifft oder die Datei keinen Titel enthält.
+
+Belege (Android 10, Emulator, von 1.1.0 aktualisiert): Datei mit Kennungsnamen und Titel zeigt
+„Hypnose Teil 2"; Datei ohne Titel behält die Kennung; Umbenennen während der Wiedergabe ändert
+Liste, App-Anzeige und Benachrichtigung, die Wiedergabe läuft weiter; der Name übersteht den
+Neustart. Nicht geprüft: der Titel im Overlay selbst (Testwerkzeug liest das Fenster nicht; gesetzt
+wird er in `AudioPlayerService.kt` im selben Schritt wie die geprüfte Benachrichtigung), echtes
+Handy, Sues ursprüngliche Quelle. Bekannte Grenze: Ein von Hand vergebener Name, der selbst wie
+eine Kennung aussieht (etwa nur Ziffern), wird beim Start durch den Titel ersetzt, falls es einen gibt.
+
+### ✅ Play Store (Sue, 2026-11-02)
+
+Wörtlich: „Würde es was kosten, wenn wir das im Android Store veröffentlichen?"
+
+Sue dazu, ebenfalls wörtlich: „Ich hatte aus Versehen eine andere Session informiert, aber du
+machst jetzt weiter." Die Sitzung Sue-Prise.de hat ihre Arbeit an diese Sitzung übergeben.
+
+Antwort: Einmalig 25 US-Dollar, keine Jahresgebühr. Neue private Konten brauchen vorher 12 Tester
+über 14 Tage. Für diese App käme dazu: Das eigene Update über bums müsste für die Play-Fassung
+raus (Google verbietet Selbst-Updates außerhalb von Play), außerdem ein eigener Paketname und ein
+eigener Schlüssel, also einmal Neuinstallation. Abgerufen 2026-11-02; Quellen:
+https://support.google.com/googleplay/android-developer/answer/14151465 und
+https://support.google.com/googleplay/android-developer/answer/12085295 ; die Gebühr nur aus
+Drittquellen wie https://magora-systems.com/google-play-developer-account-cost/ . Der Punkt
+Paketname und Schlüssel ist Claudes Kenntnis, in dieser Suche nicht belegt.
+
+### ✅ Installationslink (Sue, 2026-11-02)
+
+Wörtlich: „Den Installationslink benötige ich über einen Server-BOOMS-Link über Tailscale-Login"
+
+Bestand schon durch das Ausrollen: `https://bums.tail1c1957.ts.net:5241/` zeigt eine Seite mit
+Installationsknopf, direkt: `https://bums.tail1c1957.ts.net:5241/overlay-player-2.apk`. Erreichbar
+nur mit angemeldetem Tailscale. Keine zusätzliche Anmeldung und nichts Neues gebaut.
 
 ### ✅ Entscheidungen und GitHub (Sue, 2026-11-02)
 
@@ -22,9 +77,20 @@ Wörtlich: „2 altes löschen / 3 icon ist gut! / 1 update auf bums / Können w
 https://github.com/suenamis/android-overlayplayer nicht wundern, ich habe es public gemacht. Das
 ist für mich in Ordnung."
 
-**Update-Dienst:** Am 2026-11-02 auf bums ausgerollt, Ports 5240 und 5241 im Port-Register von`n`D:\Programme\Synology\bums-DEPLOYMENT-GUIDE.md` eingetragen. Gemessen von Blacky über das Tailnet:`n`/health` ok, `/latest.json` zeigt Version 1.1.0, die APK kam mit 10.826.445 Byte in 0,9 Sekunden`nund passender Prüfsumme an. Speicherbedarf des Dienstes: rund 10 MB.`n
-**Altes Original:** Inhalt (1.230 Dateien) liegt im Papierkorb, nicht endgültig gelöscht. Vorher`nmit dem Tag `v1.0-ausgangsstand-stable` verglichen: Bis auf `.gitignore`, IDE-Zwischendateien und`nZeilenenden war es gleich; `local.properties` liegt auch am neuen Ort. Der leere Ordner bleibt,`nweil ein laufender Prozess ihn offen hält, vermutlich diese Sitzung (ungemessen).`n
-**GitHub:** `https://github.com/suenamis/android-overlayplayer`, öffentlich auf Sues Wunsch. Vorher`ngeprüft: kein Schlüssel, keine APK, keine Audiodateien im Verlauf. Einziges Passwort im Code ist`nder allgemein bekannte Debug-Standardwert `android`; die Schlüsseldatei selbst liegt nicht im Repo.`n
+**Update-Dienst:** Am 2026-11-02 auf bums ausgerollt, Ports 5240 und 5241 im Port-Register von
+`D:\Programme\Synology\bums-DEPLOYMENT-GUIDE.md` eingetragen. Gemessen von Blacky über das Tailnet:
+`/health` ok, `/latest.json` zeigt Version 1.1.0, die APK kam mit 10.826.445 Byte in 0,9 Sekunden
+und passender Prüfsumme an. Speicherbedarf des Dienstes: rund 10 MB.
+
+**Altes Original:** Inhalt (1.230 Dateien) liegt im Papierkorb, nicht endgültig gelöscht. Vorher
+mit dem Tag `v1.0-ausgangsstand-stable` verglichen: Bis auf `.gitignore`, IDE-Zwischendateien und
+Zeilenenden war es gleich; `local.properties` liegt auch am neuen Ort. Der leere Ordner bleibt,
+weil ein laufender Prozess ihn offen hält, vermutlich diese Sitzung (ungemessen).
+
+**GitHub:** `https://github.com/suenamis/android-overlayplayer`, öffentlich auf Sues Wunsch. Vorher
+geprüft: kein Schlüssel, keine APK, keine Audiodateien im Verlauf. Einziges Passwort im Code ist
+der allgemein bekannte Debug-Standardwert `android`; die Schlüsseldatei selbst liegt nicht im Repo.
+
 ### ✅ Overlay verschieben (Sue, 2026-11-02)
 
 Wörtlich: „Außerdem wäre es cool, wenn ich das Overlay auf dem Bildschirm verschieben könnte,
@@ -95,6 +161,7 @@ hielt die Lösch-Sperre zunächst an; nach Sues Freigabe liegt sein Inhalt seit 
 | Altes Original in den Papierkorb statt endgültig löschen | Sue sagte „altes löschen"; der Papierkorb erfüllt das und bleibt umkehrbar | Keiner: wiederherstellen oder Papierkorb leeren |
 | Deploy-Skripte nutzen jetzt `/tmp/ea-overlay-player-deploy` und räumen ihn selbst weg | Die Lösch-Sperre erlaubt das Wegräumen nur in solchen Ordnern; Neu-Ausrollen damit geprüft | Gering |
 | `.claude/settings.local.json` und `__pycache__` aus Git genommen, Verlauf nicht umgeschrieben | Gehören nicht ins Repo. Die alte Fassung im ersten Commit enthält nur eine harmlose Befehlsfreigabe | Gering |
+| Umbenennen zusätzlich zur Erkennung gebaut | Die Erkennung ist eine Vermutung; ohne Titel in der Datei hilft sie nicht, und Sue muss ihre Datei sicher erkennen | Gering: ein Knopf und ein Dialog |
 | Reihenfolge: Update-Test zuletzt und auf Android 10 | Die Android-16-Testgeräte starteten nicht oder blieben gesperrt. Das Android-10-Gerät prüft zusätzlich den älteren Signaturweg | Keiner |
 
 ## Bewusst nicht gebaut
