@@ -8,7 +8,9 @@ import android.annotation.SuppressLint
 import android.app.Service
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.res.Configuration
 import android.graphics.PixelFormat
+import android.graphics.Point
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
@@ -23,10 +25,18 @@ import android.view.WindowManager
 import android.widget.ImageButton
 import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.edit
-import java.io.IOException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import java.util.Locale
+
+data class PlaybackState(
+    val uri: Uri? = null,
+    val isPlaying: Boolean = false,
+    val overlayVisible: Boolean = false
+)
 
 class AudioPlayerService : Service() {
 
@@ -42,14 +52,27 @@ class AudioPlayerService : Service() {
         const val ACTION_BACKWARD_30 = "com.example.overlay_player.BACKWARD_30"
         const val ACTION_SHOW_OVERLAY = "com.example.overlay_player.SHOW_OVERLAY"
         const val ACTION_HIDE_OVERLAY = "com.example.overlay_player.HIDE_OVERLAY"
+        const val ACTION_SAVE_POSITION = "com.example.overlay_player.SAVE_POSITION"
         const val EXTRA_URI = "extra_uri"
         const val EXTRA_TITLE = "extra_title"
         const val PREFS_NAME = "overlay_player_prefs"
+        private const val SAVE_EVERY_TICKS = 10
+        private const val END_MARGIN_MS = 1_000
+        private const val OVERLAY_WIDTH_DP = 340
+        private const val DEFAULT_BOTTOM_MARGIN_DP = 72
+        private const val KEY_OVERLAY_X = "overlay_x"
+        private const val KEY_OVERLAY_Y = "overlay_y"
+
+        private val mutableState = MutableStateFlow(PlaybackState())
+
+        /** Aktueller Stand für die App, auch nach dem Wiederöffnen während der Wiedergabe. */
+        val state: StateFlow<PlaybackState> = mutableState
     }
 
     private var mediaPlayer: MediaPlayer? = null
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
+    private var overlayParams: WindowManager.LayoutParams? = null
     private var currentUri: Uri? = null
     private var currentTitle: String = "Unbekannt"
     private var isPlaying = false
@@ -103,6 +126,7 @@ class AudioPlayerService : Service() {
             ACTION_BACKWARD_30 -> seekRelative(-30_000)
             ACTION_SHOW_OVERLAY -> showOverlay()
             ACTION_HIDE_OVERLAY -> hideOverlay()
+            ACTION_SAVE_POSITION -> savePosition()
         }
         return START_STICKY
     }
@@ -119,27 +143,35 @@ class AudioPlayerService : Service() {
         currentUri = uri
         currentTitle = title
 
-        mediaPlayer = MediaPlayer().apply {
-            try {
-                setDataSource(applicationContext, uri)
-                prepare()
-                val savedPosition = getSavedPosition(uri.toString())
-                if (savedPosition > 0) {
-                    seekTo(savedPosition)
-                }
-                start()
-                this@AudioPlayerService.isPlaying = true
-                setOnCompletionListener {
-                    clearSavedPosition(uri.toString())
-                    this@AudioPlayerService.isPlaying = false
-                    updateOverlayPlayState()
-                    updateNotification()
-                }
-            } catch (e: IOException) {
-                e.printStackTrace()
-                return
+        val player = MediaPlayer()
+        try {
+            player.setDataSource(applicationContext, uri)
+            player.prepare()
+            val savedPosition = getSavedPosition(uri.toString())
+            if (savedPosition > 0) {
+                player.seekTo(savedPosition)
             }
+            player.start()
+            player.setOnCompletionListener {
+                clearSavedPosition(uri.toString())
+                isPlaying = false
+                updateOverlayPlayState()
+                updateNotification()
+            }
+        } catch (e: Exception) {
+            // Datei verschoben oder Lesefreigabe weg: Der Eintrag bleibt, die App bleibt stehen.
+            e.printStackTrace()
+            player.release()
+            currentUri = null
+            Toast.makeText(this, "Datei nicht lesbar: $title", Toast.LENGTH_LONG).show()
+            hideOverlay()
+            publishState()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
         }
+        mediaPlayer = player
+        isPlaying = true
         updateOverlayPlayState()
         updateOverlayInfo()
         startProgressUpdater()
@@ -181,6 +213,8 @@ class AudioPlayerService : Service() {
         }
         mediaPlayer = null
         isPlaying = false
+        currentUri = null
+        publishState()
     }
 
     private fun seekRelative(ms: Int) {
@@ -200,8 +234,14 @@ class AudioPlayerService : Service() {
 
     private fun savePosition() {
         val uri = currentUri ?: return
-        val pos = mediaPlayer?.currentPosition ?: return
-        prefs.edit { putInt("pos_${uri.toString().hashCode()}", pos) }
+        val player = mediaPlayer ?: return
+        val pos = player.currentPosition
+        if (pos >= player.duration - END_MARGIN_MS) {
+            // Am Ende gespeichert, spräche die Datei beim nächsten Start nie wieder an.
+            clearSavedPosition(uri.toString())
+        } else {
+            prefs.edit { putInt("pos_${uri.toString().hashCode()}", pos) }
+        }
     }
 
     private fun clearSavedPosition(uriString: String) {
@@ -221,24 +261,41 @@ class AudioPlayerService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+        val inflater = getSystemService(LAYOUT_INFLATER_SERVICE) as LayoutInflater
+        val view = inflater.inflate(R.layout.overlay_player, null)
+        overlayView = view
+
+        val screen = screenSize()
+        val density = resources.displayMetrics.density
+        val width = minOf((OVERLAY_WIDTH_DP * density).toInt(), screen.x)
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        )
+
+        // Oben links verankert, damit x und y beim Ziehen dem Finger direkt folgen.
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
+            width,
             WindowManager.LayoutParams.WRAP_CONTENT,
             layoutFlag,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = 100
+            gravity = Gravity.TOP or Gravity.START
+            x = prefs.getInt(KEY_OVERLAY_X, (screen.x - width) / 2)
+            y = prefs.getInt(
+                KEY_OVERLAY_Y,
+                screen.y - view.measuredHeight - (DEFAULT_BOTTOM_MARGIN_DP * density).toInt()
+            )
         }
-
-        val inflater = getSystemService(LAYOUT_INFLATER_SERVICE) as LayoutInflater
-        overlayView = inflater.inflate(R.layout.overlay_player, null)
+        overlayParams = params
+        clampOverlay(params, view.measuredHeight)
 
         setupOverlayViews()
         setupOverlayDrag(params)
 
-        windowManager?.addView(overlayView, params)
+        windowManager?.addView(view, params)
+        publishState()
         updateOverlayInfo()
         updateOverlayPlayState()
         updateOverlayProgress()
@@ -286,25 +343,67 @@ class AudioPlayerService : Service() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun setupOverlayDrag(params: WindowManager.LayoutParams) {
-        val dragHandle = overlayView?.findViewById<View>(R.id.drag_handle) ?: return
+        val root = overlayView ?: return
+        var initialX = 0
         var initialY = 0
+        var initialTouchX = 0f
         var initialTouchY = 0f
 
-        dragHandle.setOnTouchListener { _, event ->
+        val dragListener = View.OnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
+                    initialX = params.x
                     initialY = params.y
+                    initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    params.y = initialY - (event.rawY - initialTouchY).toInt()
-                    windowManager?.updateViewLayout(overlayView, params)
+                    params.x = initialX + (event.rawX - initialTouchX).toInt()
+                    params.y = initialY + (event.rawY - initialTouchY).toInt()
+                    clampOverlay(params, root.height)
+                    windowManager?.updateViewLayout(root, params)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    prefs.edit {
+                        putInt(KEY_OVERLAY_X, params.x)
+                        putInt(KEY_OVERLAY_Y, params.y)
+                    }
                     true
                 }
                 else -> false
             }
         }
+
+        // Knöpfe und Regler nehmen ihre Berührungen selbst; alles andere zieht das Fenster.
+        root.setOnTouchListener(dragListener)
+        root.findViewById<View>(R.id.drag_handle).setOnTouchListener(dragListener)
+        root.findViewById<View>(R.id.tv_title).setOnTouchListener(dragListener)
+    }
+
+    private fun screenSize(): Point {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = windowManager?.currentWindowMetrics?.bounds
+            if (bounds != null) return Point(bounds.width(), bounds.height())
+        }
+        val metrics = resources.displayMetrics
+        return Point(metrics.widthPixels, metrics.heightPixels)
+    }
+
+    /** Hält das Fenster vollständig auf dem Bildschirm, damit es nie unerreichbar wird. */
+    private fun clampOverlay(params: WindowManager.LayoutParams, height: Int) {
+        val screen = screenSize()
+        params.x = params.x.coerceIn(0, maxOf(0, screen.x - params.width))
+        params.y = params.y.coerceIn(0, maxOf(0, screen.y - height))
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val view = overlayView ?: return
+        val params = overlayParams ?: return
+        clampOverlay(params, view.height)
+        windowManager?.updateViewLayout(view, params)
     }
 
     private fun hideOverlay() {
@@ -312,11 +411,17 @@ class AudioPlayerService : Service() {
             windowManager?.removeView(it)
         }
         overlayView = null
+        overlayParams = null
         tvTitle = null
         tvCurrentTime = null
         tvTotalTime = null
         seekBar = null
         btnPlayPause = null
+        publishState()
+    }
+
+    private fun publishState() {
+        mutableState.value = PlaybackState(currentUri, isPlaying, overlayView != null)
     }
 
     private fun updateOverlayInfo() {
@@ -331,6 +436,7 @@ class AudioPlayerService : Service() {
         btnPlayPause?.setImageResource(
             if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
         )
+        publishState()
     }
 
     private fun updateOverlayProgress() {
@@ -345,8 +451,12 @@ class AudioPlayerService : Service() {
     private fun startProgressUpdater() {
         stopProgressUpdater()
         progressRunnable = object : Runnable {
+            private var ticks = 0
+
             override fun run() {
                 updateOverlayProgress()
+                // Laufend sichern: Wird der Prozess beendet, ist die Stelle sonst verloren.
+                if (++ticks % SAVE_EVERY_TICKS == 0 && isPlaying) savePosition()
                 handler.postDelayed(this, 500)
             }
         }
