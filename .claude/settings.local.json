@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /c/Users/s-has/AndroidStudioProjects/OverlayPlayer/app/src -type f \\\\\\(-name *.kt -o -name *.xml \\\\\\))"
+    ]
+  }
+}
