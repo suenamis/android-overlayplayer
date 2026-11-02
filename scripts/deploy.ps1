@@ -17,8 +17,10 @@ try {
     Copy-Item -LiteralPath 'scripts/deploy.sh' -Destination (Join-Path $stage 'deploy.sh')
     & tar.exe -czf artifacts/deploy.tgz -C $stage server artifacts docs scripts deploy.sh
     if ($LASTEXITCODE -ne 0) { throw 'Paket fehlgeschlagen' }
-    & scp.exe artifacts/deploy.tgz "${HostAlias}:/tmp/overlay-player-deploy.tgz"
+    & ssh.exe $HostAlias 'mkdir -p /tmp/ea-overlay-player-deploy'
+    if ($LASTEXITCODE -ne 0) { throw 'Vorbereitung fehlgeschlagen' }
+    & scp.exe artifacts/deploy.tgz "${HostAlias}:/tmp/ea-overlay-player-deploy/deploy.tgz"
     if ($LASTEXITCODE -ne 0) { throw 'Uebertragung fehlgeschlagen' }
-    & ssh.exe $HostAlias 'mkdir -p /tmp/overlay-player-deploy && tar -xzf /tmp/overlay-player-deploy.tgz -C /tmp/overlay-player-deploy && sudo timeout 120 bash /tmp/overlay-player-deploy/deploy.sh'
+    & ssh.exe $HostAlias 'cd /tmp/ea-overlay-player-deploy && tar -xzf deploy.tgz && sudo timeout 120 bash deploy.sh; result=$?; rm -rf /tmp/ea-overlay-player-deploy; exit $result'
     if ($LASTEXITCODE -ne 0) { throw 'Ausrollen fehlgeschlagen' }
 } finally { Pop-Location }
