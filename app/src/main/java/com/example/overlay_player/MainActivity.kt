@@ -3,6 +3,7 @@ package com.example.overlay_player
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -34,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.MusicNote
@@ -51,6 +53,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -60,11 +63,16 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -116,6 +124,7 @@ class MainActivity : ComponentActivity() {
         val playback by AudioPlayerService.state.collectAsState()
         val isPlaying = playback.isPlaying
         val playingIndex = audioFiles.indexOfFirst { it.uri == playback.uri }
+        var renaming by remember { mutableStateOf<AudioFile?>(null) }
 
         fun select(index: Int) {
             selectedIndex = index
@@ -163,6 +172,22 @@ class MainActivity : ComponentActivity() {
         }
 
         UpdateDialogs()
+
+        renaming?.let { file ->
+            RenameDialog(
+                file = file,
+                onDismiss = { renaming = null },
+                onSave = { name ->
+                    val index = audioFiles.indexOf(file)
+                    if (index >= 0) {
+                        audioFiles[index] = file.copy(name = name)
+                        savePlaylist()
+                        if (index == playingIndex) sendTitle(name)
+                    }
+                    renaming = null
+                }
+            )
+        }
 
         Column(
             modifier = modifier
@@ -263,6 +288,18 @@ class MainActivity : ComponentActivity() {
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
+
+                                IconButton(
+                                    onClick = { renaming = audioFile },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Edit,
+                                        contentDescription = "Umbenennen",
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
 
                                 IconButton(
                                     onClick = {
@@ -463,7 +500,15 @@ class MainActivity : ComponentActivity() {
     private fun loadPlaylist(): List<AudioFile> {
         val saved = playlistStore.load()
         if (saved != null) {
-            return saved.map { (uri, name) -> AudioFile(Uri.parse(uri), name) }
+            // Einträge von vor 1.1.1 tragen womöglich noch die Kennung der Quelle als Namen.
+            val files = saved.map { (uri, name) ->
+                val parsed = Uri.parse(uri)
+                AudioFile(parsed, if (siehtWieKennungAus(name)) getFileName(parsed) else name)
+            }
+            if (files.map { it.name } != saved.map { it.second }) {
+                playlistStore.save(files.map { it.uri.toString() to it.name })
+            }
+            return files
         }
         val restored = contentResolver.persistedUriPermissions
             .sortedBy { it.persistedTime }
@@ -579,15 +624,76 @@ class MainActivity : ComponentActivity() {
         startService(intent)
     }
 
-    private fun getFileName(uri: Uri): String {
-        var name = uri.lastPathSegment?.substringAfterLast('/') ?: "Unbekannt"
-        contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (nameIndex >= 0 && cursor.moveToFirst()) {
-                name = cursor.getString(nameIndex)
-            }
+    private fun sendTitle(title: String) {
+        startService(Intent(this, AudioPlayerService::class.java).apply {
+            action = AudioPlayerService.ACTION_SET_TITLE
+            putExtra(AudioPlayerService.EXTRA_TITLE, title)
+        })
+    }
+
+    /** Ändert nur den Namen in der Liste, die Datei selbst bleibt unberührt. */
+    @Composable
+    private fun RenameDialog(file: AudioFile, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+        // Komplett markiert: Tippen ersetzt die Kennung, statt sie zu ergänzen.
+        var name by remember {
+            mutableStateOf(TextFieldValue(file.name, TextRange(0, file.name.length)))
         }
-        return name
+        val focus = remember { FocusRequester() }
+        LaunchedEffect(Unit) { focus.requestFocus() }
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Umbenennen") },
+            text = {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    modifier = Modifier.focusRequester(focus)
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { onSave(name.text.trim()) },
+                    enabled = name.text.isNotBlank()
+                ) { Text("Speichern") }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) { Text("Abbrechen") }
+            }
+        )
+    }
+
+    private fun getFileName(uri: Uri): String {
+        val anzeigename = try {
+            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0 && cursor.moveToFirst()) cursor.getString(nameIndex) else null
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+        if (anzeigename != null && !siehtWieKennungAus(anzeigename)) return anzeigename
+        return getAudioTitle(uri)
+            ?: anzeigename
+            ?: uri.lastPathSegment?.substringAfterLast('/')
+            ?: "Unbekannt"
+    }
+
+    /** Titel aus den Angaben in der Audiodatei, falls die Quelle keinen brauchbaren Namen liefert. */
+    private fun getAudioTitle(uri: Uri): String? {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(this, uri)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                ?.trim()
+                ?.takeUnless { it.isEmpty() || siehtWieKennungAus(it) }
+        } catch (e: RuntimeException) {
+            e.printStackTrace()
+            null
+        } finally {
+            retriever.release()
+        }
     }
 
     private companion object {
