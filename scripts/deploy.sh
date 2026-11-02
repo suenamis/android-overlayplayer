@@ -1,7 +1,7 @@
 #!/bin/bash
-# Läuft auf bums, nachdem scripts/deploy.ps1 das Paket nach /tmp/overlay-player-deploy gelegt hat.
+# Läuft auf bums, nachdem scripts/deploy.ps1 das Paket nach /tmp/ea-overlay-player-deploy gelegt hat.
 set -euo pipefail
-src=/tmp/overlay-player-deploy
+src=/tmp/ea-overlay-player-deploy
 target=/srv/overlay-player
 tailscale_url=https://bums.tail1c1957.ts.net:5241
 
