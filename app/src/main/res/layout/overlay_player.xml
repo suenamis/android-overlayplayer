@@ -3,18 +3,23 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="#E8212121"
+    android:background="@drawable/overlay_background"
     android:padding="8dp"
     android:elevation="8dp">
 
-    <!-- Drag handle -->
-    <View
+    <!-- Drag handle: die sichtbare Leiste ist schmal, die Griff-Fläche fingerbreit -->
+    <FrameLayout
         android:id="@+id/drag_handle"
-        android:layout_width="40dp"
-        android:layout_height="4dp"
-        android:layout_gravity="center_horizontal"
-        android:layout_marginBottom="8dp"
-        android:background="#80FFFFFF" />
+        android:layout_width="match_parent"
+        android:layout_height="24dp"
+        android:contentDescription="Overlay verschieben">
+
+        <View
+            android:layout_width="40dp"
+            android:layout_height="4dp"
+            android:layout_gravity="center"
+            android:background="#80FFFFFF" />
+    </FrameLayout>
 
     <!-- Title row with close button -->
     <RelativeLayout

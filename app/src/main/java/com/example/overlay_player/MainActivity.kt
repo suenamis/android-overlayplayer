@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.widget.Toast
@@ -40,6 +42,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Replay30
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -47,15 +50,18 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -63,15 +69,25 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.example.overlay_player.ui.theme.OverlayPlayerTheme
+import java.io.File
+import java.io.IOException
+import java.util.Date
 
 data class AudioFile(val uri: Uri, val name: String)
 
 class MainActivity : ComponentActivity() {
 
+    private lateinit var playlistStore: PlaylistStore
+    private lateinit var updates: UpdateController
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        playlistStore = PlaylistStore(this)
+        updates = UpdateController(applicationContext, lifecycleScope)
         enableEdgeToEdge()
+        Handler(Looper.getMainLooper()).postDelayed(::writeDiagnostics, DIAGNOSTICS_DELAY_MS)
         setContent {
             OverlayPlayerTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -81,12 +97,39 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        updates.resumePendingInstall()
+        updates.check(automatic = true)
+    }
+
     @Composable
     private fun PlayerScreen(modifier: Modifier = Modifier) {
-        val audioFiles = remember { mutableStateListOf<AudioFile>() }
-        var selectedIndex by remember { mutableIntStateOf(-1) }
-        var isPlaying by remember { mutableStateOf(false) }
-        var playingIndex by remember { mutableIntStateOf(-1) }
+        val audioFiles = remember { loadPlaylist().toMutableStateList() }
+        var selectedIndex by remember {
+            val saved = playlistStore.selectedUri
+            mutableIntStateOf(
+                audioFiles.indexOfFirst { it.uri.toString() == saved }
+                    .takeIf { it >= 0 } ?: if (audioFiles.isEmpty()) -1 else 0
+            )
+        }
+        val playback by AudioPlayerService.state.collectAsState()
+        val isPlaying = playback.isPlaying
+        val playingIndex = audioFiles.indexOfFirst { it.uri == playback.uri }
+
+        fun select(index: Int) {
+            selectedIndex = index
+            playlistStore.selectedUri = audioFiles.getOrNull(index)?.uri?.toString()
+        }
+
+        fun savePlaylist() {
+            playlistStore.save(audioFiles.map { it.uri.toString() to it.name })
+        }
+
+        // Beim Wiederöffnen während der Wiedergabe steht die Auswahl auf der laufenden Datei.
+        LaunchedEffect(playback.uri) {
+            if (playingIndex >= 0) select(playingIndex)
+        }
 
         val permissionLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
@@ -96,18 +139,30 @@ class MainActivity : ComponentActivity() {
             ActivityResultContracts.OpenMultipleDocuments()
         ) { uris ->
             for (uri in uris) {
-                contentResolver.takePersistableUriPermission(
-                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (e: SecurityException) {
+                    e.printStackTrace()
+                    Toast.makeText(
+                        this,
+                        "Diese Quelle erlaubt keinen dauerhaften Zugriff",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
                 val name = getFileName(uri)
                 if (audioFiles.none { it.uri == uri }) {
                     audioFiles.add(AudioFile(uri, name))
                 }
             }
+            savePlaylist()
             if (selectedIndex == -1 && audioFiles.isNotEmpty()) {
-                selectedIndex = 0
+                select(0)
             }
         }
+
+        UpdateDialogs()
 
         Column(
             modifier = modifier
@@ -175,7 +230,7 @@ class MainActivity : ComponentActivity() {
                                 .fillMaxWidth()
                                 .padding(vertical = 3.dp)
                                 .clip(RoundedCornerShape(12.dp))
-                                .clickable { selectedIndex = index },
+                                .clickable { select(index) },
                             colors = CardDefaults.cardColors(
                                 containerColor = when {
                                     isSelected -> MaterialTheme.colorScheme.primaryContainer
@@ -211,20 +266,19 @@ class MainActivity : ComponentActivity() {
 
                                 IconButton(
                                     onClick = {
-                                        if (isCurrentlyPlaying) {
+                                        if (index == playingIndex) {
                                             sendAction(AudioPlayerService.ACTION_STOP)
-                                            isPlaying = false
-                                            playingIndex = -1
                                         }
                                         audioFiles.removeAt(index)
-                                        if (selectedIndex >= audioFiles.size) {
-                                            selectedIndex = audioFiles.size - 1
-                                        }
-                                        if (playingIndex == index) {
-                                            playingIndex = -1
-                                        } else if (playingIndex > index) {
-                                            playingIndex--
-                                        }
+                                        releaseFileAccess(audioFile.uri)
+                                        savePlaylist()
+                                        select(
+                                            when {
+                                                selectedIndex > index -> selectedIndex - 1
+                                                selectedIndex >= audioFiles.size -> audioFiles.size - 1
+                                                else -> selectedIndex
+                                            }
+                                        )
                                     },
                                     modifier = Modifier.size(32.dp)
                                 ) {
@@ -282,13 +336,10 @@ class MainActivity : ComponentActivity() {
                             if (isPlaying && playingIndex == selectedIndex) {
                                 // Pause current
                                 sendAction(AudioPlayerService.ACTION_PAUSE)
-                                isPlaying = false
                             } else {
                                 // Play selected file (new or different)
                                 if (!checkOverlayPermission()) return@FilledTonalButton
                                 startAudioService(selected.uri, selected.name)
-                                isPlaying = true
-                                playingIndex = selectedIndex
                             }
                         },
                         modifier = Modifier.size(64.dp)
@@ -314,14 +365,22 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                Button(onClick = {
-                    sendAction(AudioPlayerService.ACTION_STOP)
-                    isPlaying = false
-                    playingIndex = -1
-                }) {
-                    Icon(Icons.Filled.Stop, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Stop")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = { sendAction(AudioPlayerService.ACTION_STOP) }) {
+                        Icon(Icons.Filled.Stop, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Stop")
+                    }
+                    if (playback.uri != null && !playback.overlayVisible) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        OutlinedButton(onClick = {
+                            if (checkOverlayPermission()) {
+                                sendAction(AudioPlayerService.ACTION_SHOW_OVERLAY)
+                            }
+                        }) {
+                            Text("Overlay zeigen")
+                        }
+                    }
                 }
             } else {
                 Spacer(modifier = Modifier.height(48.dp))
@@ -331,7 +390,128 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
+                Spacer(modifier = Modifier.weight(1f))
             }
+
+            UpdateRow()
+        }
+    }
+
+    @Composable
+    private fun UpdateRow() {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = updates.status.ifEmpty { "Version ${BuildConfig.VERSION_NAME}" },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = { updates.check(automatic = false) }) {
+                Text("Auf Updates prüfen")
+            }
+        }
+    }
+
+    @Composable
+    private fun UpdateDialogs() {
+        updates.offer?.let { update ->
+            AlertDialog(
+                onDismissRequest = { updates.dismissOffer() },
+                title = { Text("Update verfügbar · ${update.versionName}") },
+                text = {
+                    Text("${update.notes}\n\nJetzt von bums herunterladen und installieren?")
+                },
+                confirmButton = {
+                    TextButton(onClick = { updates.download(update) }) {
+                        Text("Aktualisieren")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { updates.dismissOffer() }) { Text("Später") }
+                }
+            )
+        }
+        if (updates.needsInstallPermission) {
+            AlertDialog(
+                onDismissRequest = { updates.cancelInstall() },
+                title = { Text("Installation erlauben") },
+                text = {
+                    Text(
+                        "Erlaube Android einmalig, Updates aus dem Overlay-Player zu " +
+                            "installieren. Danach kehrst du hierher zurück."
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { updates.openInstallSettings() }) {
+                        Text("Einstellungen")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { updates.cancelInstall() }) { Text("Abbrechen") }
+                }
+            )
+        }
+    }
+
+    /** Beim ersten Start nach 1.0 kommt die alte Liste aus Androids Lesefreigaben zurück. */
+    private fun loadPlaylist(): List<AudioFile> {
+        val saved = playlistStore.load()
+        if (saved != null) {
+            return saved.map { (uri, name) -> AudioFile(Uri.parse(uri), name) }
+        }
+        val restored = contentResolver.persistedUriPermissions
+            .sortedBy { it.persistedTime }
+            .mapNotNull { permission ->
+                try {
+                    if (permission.isReadPermission) {
+                        AudioFile(permission.uri, getFileName(permission.uri))
+                    } else {
+                        null
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    null
+                }
+            }
+        playlistStore.save(restored.map { it.uri.toString() to it.name })
+        return restored
+    }
+
+    private fun releaseFileAccess(uri: Uri) {
+        try {
+            contentResolver.releasePersistableUriPermission(
+                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (e: SecurityException) {
+            e.printStackTrace()
+        }
+    }
+
+    /** Bericht ohne Dateinamen, damit er sich gefahrlos weitergeben lässt. */
+    private fun writeDiagnostics() {
+        val directory = File(getExternalFilesDir(null), "Diagnose")
+        try {
+            directory.mkdirs()
+            File(directory, "diagnose.txt").writeText(
+                buildString {
+                    appendLine("Zeit: ${Date()}")
+                    appendLine("Version: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                    appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
+                    appendLine("Gerät: ${Build.MANUFACTURER} ${Build.MODEL}")
+                    appendLine("Overlay-Berechtigung: ${Settings.canDrawOverlays(this@MainActivity)}")
+                    appendLine("Playlist-Einträge: ${playlistStore.load()?.size ?: 0}")
+                    appendLine("Dauerhafte Lesefreigaben: ${contentResolver.persistedUriPermissions.size}")
+                    appendLine("Wiedergabe aktiv: ${AudioPlayerService.state.value.uri != null}")
+                }
+            )
+        } catch (e: IOException) {
+            e.printStackTrace()
         }
     }
 
@@ -400,7 +580,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun getFileName(uri: Uri): String {
-        var name = "Unbekannt"
+        var name = uri.lastPathSegment?.substringAfterLast('/') ?: "Unbekannt"
         contentResolver.query(uri, null, null, null, null)?.use { cursor ->
             val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             if (nameIndex >= 0 && cursor.moveToFirst()) {
@@ -408,5 +588,9 @@ class MainActivity : ComponentActivity() {
             }
         }
         return name
+    }
+
+    private companion object {
+        const val DIAGNOSTICS_DELAY_MS = 5_000L
     }
 }
