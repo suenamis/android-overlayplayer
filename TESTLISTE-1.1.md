@@ -12,3 +12,11 @@ App: `D:\Programme\OverlayPlayer\artifacts\overlay-player-2.apk`
 - [ ] Unter dem alten Platz lässt sich etwas antippen.
 - [ ] Overlay schließen, Musik läuft weiter: In der App erscheint „Overlay zeigen".
 - [ ] Android 13 oder neuer: keine Absturz- oder Berechtigungsprobleme.
+
+## Version 1.1.1: Dateinamen
+
+- [ ] Die Datei mit der Buchstaben-Zahlen-Kombination zeigt nach dem Update ihren Titel.
+- [ ] Neu importierte Dateien zeigen einen lesbaren Namen.
+- [ ] Stift-Knopf neben einer Datei: Der alte Name ist markiert, Tippen ersetzt ihn.
+- [ ] Umbenennen während der Wiedergabe: Liste, Overlay und Benachrichtigung zeigen den neuen Namen, der Ton läuft weiter.
+- [ ] Nach dem Schließen der App bleibt der neue Name stehen.
