@@ -21,6 +21,15 @@
             android:background="#80FFFFFF" />
     </FrameLayout>
 
+    <!-- Bild nur bei Videos; Größe setzt der Dienst nach dem Seitenverhältnis -->
+    <TextureView
+        android:id="@+id/video_view"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="4dp"
+        android:visibility="gone" />
+
     <!-- Title row with close button -->
     <RelativeLayout
         android:layout_width="match_parent"
@@ -56,6 +65,7 @@
 
     <!-- SeekBar with time labels -->
     <LinearLayout
+        android:id="@+id/seek_row"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"

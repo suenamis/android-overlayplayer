@@ -16,8 +16,51 @@ bearbeitet, dann abgehakt. Diese Liste ist Sues Prüfstein, nicht Claudes Notizz
 | Installationslink über bums per Tailscale | 2026-11-02 | ✅ erledigt, Link nachgeprüft |
 | Importierte Datei zeigt Buchstaben-Zahlen-Kombination statt Dateiname | 2026-11-02 | 🟡 Version 1.1.1 seit 2026-11-02 auf bums, Test auf Sues Handy steht aus |
 | Kosten einer Veröffentlichung im Play Store | 2026-11-02 | ✅ beantwortet |
+| MP4-Videos von Dropbox und Telefon, Stelle merken, 10 s spulen, Playlist, direkt ausrollen | 2026-11-07 | 🟡 Version 1.2.0 gebaut, im Emulator getestet und ausgerollt; Dropbox und echtes Handy ungeprüft |
 
 ## Aufgaben
+
+### 🟡 Videos (Sue, 2026-11-07)
+
+Wörtlich: „Kannst du bitte den Overlay Player so erweitern, dass er auch MP4-Dateien von der
+Dropbox oder vom Telefon abspielt und sich auch dort genau die Stelle merkt, wo man aufgehört hat,
+und dass man da 10 Sekunden zurück- und vorspulen kann, so wie bei den Audios? Und dass man auch
+eine Playlist anlegen kann oder mehrere Videos einladen kann. Bitte direkt ausrollen und so, dass
+ich automatisch das Update bekomme."
+
+Nachtrag, wörtlich: „Ja, beim Overlay muss das Video aber klein werden, so wie bei YouTube, wenn
+man dann in ein anderes Fenster wechselt."
+
+**Gebaut (Version 1.2.0):**
+
+- Dateiauswahl nimmt Audio und Video (`audio/*`, `video/*`), mehrere auf einmal. Videos stehen mit
+  Filmsymbol in derselben Liste wie die Audios.
+- Solange die App vorn ist, läuft ein Video groß in der App (statt der Überschrift, höchstens
+  320 dp hoch, im echten Seitenverhältnis). Wechselt man in eine andere App, wird es zum kleinen,
+  verschiebbaren Fenster (220 dp breit): Bild, Titel, 10 s zurück, Play/Pause, 10 s vor,
+  Schließen. Zurück in der App verschwindet das kleine Fenster, das Bild ist wieder groß.
+- Audio verhält sich wie bisher (breites Fenster mit Regler und 30-s-Knöpfen, auch in der App).
+- Stelle merken und 10/30 s spulen gelten für Videos genauso, mit demselben Speicher je Datei.
+- Playlist: Ist eine Datei zu Ende, spielt die nächste der Liste von selbst; nach der letzten ist
+  Schluss.
+- Dateien werden im Hintergrund geöffnet. Grund: Eine Datei aus der Dropbox muss die Dropbox-App
+  erst herunterladen; im Hauptfaden hätte das die App einfrieren lassen. So lange steht „Lädt: …"
+  im Fenster und in der Benachrichtigung.
+
+**Belege (Android 10, Emulator, Update von 1.1.1 ohne Deinstallation, 18 Prüfungen grün):** vier
+Dateien auf einmal geladen; Querformat-Video groß in der App und kein Fenster; nach dem Ende des
+ersten Videos startet das nächste; beim Wechsel zum Startbildschirm kleines Fenster mit
+577 px = 220 dp; Bild läuft dort weiter; zurück in der App wieder groß; zweimal 10 s vor ergibt
+33,3 s gespeichert; nach Neustart der App geht es dort weiter, 10 s zurück wirkt (23,4 s);
+Hochformat-Video (gedreht gespeichert) erscheint hochkant, das kleine Fenster bleibt ganz im Bild;
+keine Abstürze im Protokoll. Dass ein Bild zu sehen ist, misst der Test über die Zahl der Farben
+im Bildbereich (Testbild mit Farbbalken: 53 bis 71 Farben gegen höchstens 5 ohne Bild); niemand
+hat die Bildschirmfotos angesehen, sie verlassen den Rechner nicht.
+
+**Nicht geprüft:** Dropbox (auf dem Emulator nicht installiert), echtes Handy, Ton gehört, große
+Videodateien. Offenes Risiko bei Dropbox: Gibt die Dropbox-App keinen dauerhaften Zugriff, meldet
+die App das beim Hinzufügen („Diese Quelle erlaubt keinen dauerhaften Zugriff"); der Eintrag
+funktioniert dann womöglich nach einem Neustart des Handys nicht mehr.
 
 ### 🟡 Falscher Dateiname nach dem Import (Sue, 2026-11-02)
 
@@ -165,11 +208,18 @@ hielt die Lösch-Sperre zunächst an; nach Sues Freigabe liegt sein Inhalt seit 
 | Deploy-Skripte nutzen jetzt `/tmp/ea-overlay-player-deploy` und räumen ihn selbst weg | Die Lösch-Sperre erlaubt das Wegräumen nur in solchen Ordnern; Neu-Ausrollen damit geprüft | Gering |
 | `.claude/settings.local.json` und `__pycache__` aus Git genommen, Verlauf nicht umgeschrieben | Gehören nicht ins Repo. Die alte Fassung im ersten Commit enthält nur eine harmlose Befehlsfreigabe | Gering |
 | Umbenennen zusätzlich zur Erkennung gebaut | Die Erkennung ist eine Vermutung; ohne Titel in der Datei hilft sie nicht, und Sue muss ihre Datei sicher erkennen | Gering: ein Knopf und ein Dialog |
+| Video groß in der App, klein in anderen Apps; Audio unverändert | Sues Wunsch „so wie bei YouTube“; bei Audio gibt es kein Bild, dort bleibt das gewohnte Fenster | Gering: eine Abfrage im Dienst (`wantsOverlay`) |
+| Kleines Fenster 220 dp breit, ohne Regler und 30-s-Knöpfe, Bild höchstens 40 % der Bildschirmhöhe | Klein genug, um Inhalte dahinter zu erreichen; Sue wollte 10 s spulen, das bleibt | Gering: Konstanten in `AudioPlayerService.kt` |
+| Playlist spielt von selbst weiter, auch bei Audio | „Playlist anlegen“ heißt nacheinander abspielen; vorher hielt der Player nach jeder Datei an | Gering: eine Funktion (`onCompleted`) |
+| Version 1.2.0 statt 1.1.2 | Neue Funktion, nicht nur Fehlerbehebung | Keiner |
 | Reihenfolge: Update-Test zuletzt und auf Android 10 | Die Android-16-Testgeräte starteten nicht oder blieben gesperrt. Das Android-10-Gerät prüft zusätzlich den älteren Signaturweg | Keiner |
 
 ## Bewusst nicht gebaut
 
 - **Kein Overlay in der Größe veränderbar:** nicht gewünscht.
+- **Kein Vollbild für Videos und kein Bildschirm-Drehen in der App:** nicht gewünscht; das Bild in
+  der App ist höchstens 320 dp hoch.
+- **Keine Knöpfe für nächste und vorige Datei:** nicht gewünscht; man wählt in der Liste.
 - **Kein automatischer Download ohne Rückfrage:** Android verlangt ohnehin die Bestätigung.
 
 ## Grenzen der Prüfung

@@ -11,18 +11,23 @@ import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.graphics.Point
+import android.graphics.SurfaceTexture
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
+import android.view.Surface
+import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -31,11 +36,14 @@ import androidx.core.content.edit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.Locale
+import java.util.concurrent.Executors
 
 data class PlaybackState(
     val uri: Uri? = null,
     val isPlaying: Boolean = false,
-    val overlayVisible: Boolean = false
+    val overlayVisible: Boolean = false,
+    val videoWidth: Int = 0,
+    val videoHeight: Int = 0
 )
 
 class AudioPlayerService : Service() {
@@ -63,11 +71,32 @@ class AudioPlayerService : Service() {
         private const val DEFAULT_BOTTOM_MARGIN_DP = 72
         private const val KEY_OVERLAY_X = "overlay_x"
         private const val KEY_OVERLAY_Y = "overlay_y"
+        private const val MINI_WIDTH_DP = 220
+        private const val MAX_VIDEO_SCREEN_SHARE = 0.4f
 
         private val mutableState = MutableStateFlow(PlaybackState())
 
         /** Aktueller Stand für die App, auch nach dem Wiederöffnen während der Wiedergabe. */
         val state: StateFlow<PlaybackState> = mutableState
+
+        private var running: AudioPlayerService? = null
+        private var appVisible = false
+        private var appSurface: Surface? = null
+
+        /**
+         * Wie bei YouTube: Solange die App vorn ist, läuft ein Video groß in der App.
+         * Wechselt man in eine andere App, wird es zum kleinen Fenster.
+         */
+        fun setAppVisible(visible: Boolean) {
+            appVisible = visible
+            running?.onAppVisibilityChanged()
+        }
+
+        /** Bildfläche der App; null, sobald die App ihr Bild abbaut. */
+        fun setAppSurface(surface: Surface?) {
+            appSurface = surface
+            running?.applySurface()
+        }
     }
 
     private var mediaPlayer: MediaPlayer? = null
@@ -80,6 +109,13 @@ class AudioPlayerService : Service() {
     private lateinit var prefs: SharedPreferences
     private val handler = Handler(Looper.getMainLooper())
     private var progressRunnable: Runnable? = null
+    // Öffnen kann bei Cloud-Dateien (Dropbox) dauern, bis sie geladen sind: nie im Hauptfaden.
+    private val loader = Executors.newSingleThreadExecutor()
+    private var loadToken = 0
+    private var isLoading = false
+    private var videoView: TextureView? = null
+    private var videoSurface: Surface? = null
+    private var currentIsVideo = false
 
     // Overlay views
     private var tvTitle: TextView? = null
@@ -91,6 +127,7 @@ class AudioPlayerService : Service() {
     override fun onCreate() {
         super.onCreate()
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        running = this
         createNotificationChannel()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
     }
@@ -108,7 +145,7 @@ class AudioPlayerService : Service() {
                 if (uri != null) {
                     startForeground(NOTIFICATION_ID, buildNotification())
                     playAudio(uri, title)
-                    showOverlay()
+                    if (wantsOverlay()) showOverlay() else hideOverlay()
                 } else if (mediaPlayer != null) {
                     resumePlayback()
                 }
@@ -138,7 +175,7 @@ class AudioPlayerService : Service() {
     }
 
     private fun playAudio(uri: Uri, title: String) {
-        if (currentUri == uri && mediaPlayer != null) {
+        if (currentUri == uri && (mediaPlayer != null || isLoading)) {
             resumePlayback()
             return
         }
@@ -148,39 +185,103 @@ class AudioPlayerService : Service() {
 
         currentUri = uri
         currentTitle = title
+        currentIsVideo = isVideoUri(uri)
+        isLoading = true
+        val token = loadToken
+        publishState()
+        updateOverlayInfo()
+        updateNotification()
 
-        val player = MediaPlayer()
-        try {
-            player.setDataSource(applicationContext, uri)
-            player.prepare()
-            val savedPosition = getSavedPosition(uri.toString())
-            if (savedPosition > 0) {
-                player.seekTo(savedPosition)
+        loader.execute {
+            val player = MediaPlayer()
+            // Vor prepare() setzen: Die Bildgröße meldet der Player oft schon beim Vorbereiten.
+            player.setOnVideoSizeChangedListener { _, _, _ -> layoutVideo() }
+            try {
+                player.setDataSource(applicationContext, uri)
+                player.prepare()
+            } catch (e: Exception) {
+                // Datei verschoben oder Lesefreigabe weg: Der Eintrag bleibt, die App bleibt stehen.
+                e.printStackTrace()
+                player.release()
+                handler.post { if (token == loadToken) failPlayback(title) }
+                return@execute
             }
-            player.start()
-            player.setOnCompletionListener {
-                clearSavedPosition(uri.toString())
-                isPlaying = false
-                updateOverlayPlayState()
-                updateNotification()
+            handler.post {
+                if (token == loadToken) startPrepared(player, uri) else player.release()
             }
-        } catch (e: Exception) {
-            // Datei verschoben oder Lesefreigabe weg: Der Eintrag bleibt, die App bleibt stehen.
-            e.printStackTrace()
-            player.release()
-            currentUri = null
-            Toast.makeText(this, "Datei nicht lesbar: $title", Toast.LENGTH_LONG).show()
-            hideOverlay()
-            publishState()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return
         }
+    }
+
+    private fun startPrepared(player: MediaPlayer, uri: Uri) {
+        isLoading = false
+        val savedPosition = getSavedPosition(uri.toString())
+        if (savedPosition > 0) {
+            player.seekTo(savedPosition)
+        }
+        player.setOnCompletionListener { onCompleted(uri) }
         mediaPlayer = player
+        if (player.videoWidth > 0) currentIsVideo = true
+        applySurface()
+        player.start()
         isPlaying = true
         updateOverlayPlayState()
         updateOverlayInfo()
+        onAppVisibilityChanged()
+        layoutVideo()
         startProgressUpdater()
+        updateNotification()
+    }
+
+    private fun isVideoUri(uri: Uri): Boolean = try {
+        contentResolver.getType(uri)?.startsWith("video/") == true
+    } catch (e: Exception) {
+        e.printStackTrace()
+        false
+    }
+
+    /** Ton braucht das Fenster immer, ein Video nur, solange die App nicht vorn ist. */
+    private fun wantsOverlay() = !(currentIsVideo && appVisible)
+
+    fun onAppVisibilityChanged() {
+        if (currentUri == null) return
+        if (!wantsOverlay()) {
+            hideOverlay()
+        } else if (currentIsVideo && overlayView == null &&
+            (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this))
+        ) {
+            showOverlay()
+        }
+        applySurface()
+    }
+
+    /** Das Bild geht in die App, solange sie vorn ist, sonst ins kleine Fenster. */
+    fun applySurface() {
+        val inApp = appSurface.takeIf { appVisible }
+        mediaPlayer?.setSurface(inApp ?: videoSurface)
+    }
+
+    private fun failPlayback(title: String) {
+        isLoading = false
+        currentUri = null
+        Toast.makeText(this, "Datei nicht lesbar: $title", Toast.LENGTH_LONG).show()
+        hideOverlay()
+        publishState()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    /** Spielt wie eine Playlist weiter: die nächste Datei der Liste, am Ende ist Schluss. */
+    private fun onCompleted(uri: Uri) {
+        clearSavedPosition(uri.toString())
+        val entries = PlaylistStore(this).load().orEmpty()
+        val index = entries.indexOfFirst { it.first == uri.toString() }
+        val next = if (index >= 0) entries.getOrNull(index + 1) else null
+        if (next != null) {
+            playAudio(Uri.parse(next.first), next.second)
+            return
+        }
+        isPlaying = false
+        updateOverlayPlayState()
         updateNotification()
     }
 
@@ -211,6 +312,8 @@ class AudioPlayerService : Service() {
 
     private fun stopPlayback() {
         stopProgressUpdater()
+        loadToken++
+        isLoading = false
         mediaPlayer?.let {
             if (it.isPlaying) {
                 it.stop()
@@ -220,6 +323,7 @@ class AudioPlayerService : Service() {
         mediaPlayer = null
         isPlaying = false
         currentUri = null
+        layoutVideo()
         publishState()
     }
 
@@ -302,6 +406,7 @@ class AudioPlayerService : Service() {
 
         windowManager?.addView(view, params)
         publishState()
+        layoutVideo()
         updateOverlayInfo()
         updateOverlayPlayState()
         updateOverlayProgress()
@@ -315,6 +420,25 @@ class AudioPlayerService : Service() {
         tvTotalTime = view.findViewById(R.id.tv_total_time)
         seekBar = view.findViewById(R.id.seek_bar)
         btnPlayPause = view.findViewById(R.id.btn_play_pause)
+        videoView = view.findViewById<TextureView>(R.id.video_view).apply {
+            surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+                    videoSurface = Surface(texture)
+                    applySurface()
+                }
+
+                override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                    val surface = videoSurface
+                    videoSurface = null
+                    applySurface()
+                    surface?.release()
+                    return true
+                }
+
+                override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {}
+                override fun onSurfaceTextureUpdated(texture: SurfaceTexture) {}
+            }
+        }
 
         val btnBack30 = view.findViewById<ImageButton>(R.id.btn_back_30)
         val btnBack10 = view.findViewById<ImageButton>(R.id.btn_back_10)
@@ -386,6 +510,53 @@ class AudioPlayerService : Service() {
         root.setOnTouchListener(dragListener)
         root.findViewById<View>(R.id.drag_handle).setOnTouchListener(dragListener)
         root.findViewById<View>(R.id.tv_title).setOnTouchListener(dragListener)
+        root.findViewById<View>(R.id.video_view).setOnTouchListener(dragListener)
+    }
+
+    /**
+     * Bei Videos wird das Fenster klein wie bei YouTube: Bild, Titel und die drei
+     * wichtigsten Knöpfe. Bei Ton bleibt es das breite Fenster mit Regler.
+     */
+    private fun layoutVideo() {
+        val player = mediaPlayer
+        val videoWidth = player?.videoWidth ?: 0
+        val videoHeight = player?.videoHeight ?: 0
+        publishState()
+        val view = videoView ?: return
+        val root = overlayView ?: return
+        val params = overlayParams ?: return
+        val mini = videoWidth > 0 && videoHeight > 0
+        val density = resources.displayMetrics.density
+        val screen = screenSize()
+        params.width = minOf(((if (mini) MINI_WIDTH_DP else OVERLAY_WIDTH_DP) * density).toInt(), screen.x)
+        val extras = if (mini) View.GONE else View.VISIBLE
+        root.findViewById<View>(R.id.seek_row).visibility = extras
+        root.findViewById<View>(R.id.btn_back_30).visibility = extras
+        root.findViewById<View>(R.id.btn_forward_30).visibility = extras
+        if (!mini) {
+            view.visibility = View.GONE
+        } else {
+            val maxWidth = params.width - root.paddingLeft - root.paddingRight
+            val maxHeight = (screen.y * MAX_VIDEO_SCREEN_SHARE).toInt()
+            var width = maxWidth
+            var height = width * videoHeight / videoWidth
+            if (height > maxHeight) {
+                height = maxHeight
+                width = height * videoWidth / videoHeight
+            }
+            view.layoutParams = (view.layoutParams as LinearLayout.LayoutParams).apply {
+                this.width = width
+                this.height = height
+            }
+            view.visibility = View.VISIBLE
+        }
+        windowManager?.updateViewLayout(root, params)
+        // Nach dem Umbau neu einpassen, sonst ragt ein größeres Fenster über den Rand.
+        root.post {
+            if (overlayView !== root) return@post
+            clampOverlay(params, root.height)
+            windowManager?.updateViewLayout(root, params)
+        }
     }
 
     private fun screenSize(): Point {
@@ -413,6 +584,12 @@ class AudioPlayerService : Service() {
     }
 
     private fun hideOverlay() {
+        // Ohne Fenster läuft ein Video als Ton weiter, oder groß in der App.
+        val surface = videoSurface
+        videoSurface = null
+        applySurface()
+        surface?.release()
+        videoView = null
         overlayView?.let {
             windowManager?.removeView(it)
         }
@@ -427,11 +604,15 @@ class AudioPlayerService : Service() {
     }
 
     private fun publishState() {
-        mutableState.value = PlaybackState(currentUri, isPlaying, overlayView != null)
+        val player = mediaPlayer
+        mutableState.value = PlaybackState(
+            currentUri, isPlaying, overlayView != null,
+            player?.videoWidth ?: 0, player?.videoHeight ?: 0
+        )
     }
 
     private fun updateOverlayInfo() {
-        tvTitle?.text = currentTitle
+        tvTitle?.text = if (isLoading) "Lädt: $currentTitle" else currentTitle
         mediaPlayer?.let {
             tvTotalTime?.text = formatTime(it.duration)
             seekBar?.max = it.duration
@@ -517,7 +698,13 @@ class AudioPlayerService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Overlay Player")
-            .setContentText(if (isPlaying) "Spielt: $currentTitle" else "Pausiert: $currentTitle")
+            .setContentText(
+                when {
+                    isLoading -> "Lädt: $currentTitle"
+                    isPlaying -> "Spielt: $currentTitle"
+                    else -> "Pausiert: $currentTitle"
+                }
+            )
             .setSmallIcon(R.drawable.ic_music_note)
             .setContentIntent(pendingOpen)
             .addAction(
@@ -556,6 +743,8 @@ class AudioPlayerService : Service() {
         savePosition()
         stopPlayback()
         hideOverlay()
+        loader.shutdownNow()
+        if (running === this) running = null
         super.onDestroy()
     }
 }
