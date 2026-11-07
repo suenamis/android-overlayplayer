@@ -16,8 +16,8 @@ android {
         minSdk = 24
         targetSdk = 36
         // Die Vorgaben per -P dienen nur dem Update-Test auf dem Emulator.
-        versionCode = (findProperty("overlayVersionCode") as String?)?.toInt() ?: 4
-        versionName = findProperty("overlayVersionName") as String? ?: "1.2.0"
+        versionCode = (findProperty("overlayVersionCode") as String?)?.toInt() ?: 5
+        versionName = findProperty("overlayVersionName") as String? ?: "1.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "UPDATE_BASE_URL", "\"https://bums.tail1c1957.ts.net:5241\"")

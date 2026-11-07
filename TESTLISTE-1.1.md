@@ -32,3 +32,18 @@ App: `D:\Programme\OverlayPlayer\artifacts\overlay-player-2.apk`
 - [ ] Video mitten drin stoppen, App schließen, wieder starten: Es geht an derselben Stelle weiter.
 - [ ] Ende eines Videos: Die nächste Datei der Liste startet von selbst.
 - [ ] Audio verhält sich wie vorher.
+
+## Version 1.3.0: Vollbild, „Öffnen mit", Update-Meldung
+
+- [ ] Ein Video in der Liste wählen und Play: Es geht ins Vollbild, ein Querformat-Video dreht sich quer. Beim ersten Mal zeigt Android einen Hinweis zum Vollbild, einfach bestätigen.
+- [ ] Im Vollbild: Nach etwa vier Sekunden verschwindet die Bedienung. Einmal tippen holt sie zurück.
+- [ ] Im Vollbild 10 s und 30 s spulen, Pause und Play, die Zeitleiste ziehen.
+- [ ] Handy wieder aufrichten: normale Ansicht, das Video läuft weiter.
+- [ ] Handy in der normalen Ansicht quer drehen (automatische Drehung an): Vollbild. Aufrichten: zurück.
+- [ ] Knopf „Vollbild verlassen" oben rechts und die Zurück-Taste führen in die normale Ansicht, nicht aus der App.
+- [ ] Ein Hochformat-Video im Vollbild bleibt hochkant.
+- [ ] Aus dem Vollbild in eine andere App wechseln: kleines Fenster wie bisher.
+- [ ] In „Dateien" bzw. „Downloads" auf ein Video tippen: Der Overlay Player wird angeboten, das Video landet in der Liste und spielt.
+- [ ] Dasselbe aus der Dropbox-App über „Öffnen mit" oder „Teilen". Steht unter dem Knopf „Kopiere Datei in die App"? Bitte notieren (dann belegt die Datei zusätzlichen Platz).
+- [ ] App schließen und neu öffnen: Die so geöffneten Dateien stehen noch in der Liste und spielen.
+- [ ] Beim nächsten Update: Klappt es nicht, steht unten in der App der Grund. Bitte den Text notieren.

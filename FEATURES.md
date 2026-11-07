@@ -16,10 +16,94 @@ bearbeitet, dann abgehakt. Diese Liste ist Sues Prüfstein, nicht Claudes Notizz
 | Installationslink über bums per Tailscale | 2026-11-02 | ✅ erledigt, Link nachgeprüft |
 | Importierte Datei zeigt Buchstaben-Zahlen-Kombination statt Dateiname | 2026-11-02 | 🟡 Version 1.1.1 seit 2026-11-02 auf bums, Test auf Sues Handy steht aus |
 | Kosten einer Veröffentlichung im Play Store | 2026-11-02 | ✅ beantwortet |
-| MP4-Videos von Dropbox und Telefon, Stelle merken, 10 s spulen, Playlist, direkt ausrollen | 2026-11-07 | 🟡 Version 1.2.0 seit 2026-11-07 auf bums (Download mit passender Prüfsumme); Dropbox und echtes Handy ungeprüft |
+| MP4-Videos von Dropbox und Telefon, Stelle merken, 10 s spulen, Playlist, direkt ausrollen | 2026-11-07 | ✅ Version 1.2.0 seit 2026-11-07 auf bums; Video spielt laut Sue am 2026-11-07 auf ihrem Handy |
 | Zwei Videos als Tailscale-Download-Link fürs Handy | 2026-11-07 | ✅ erledigt, Prüfsummen gleich |
+| „Die 2 Videos kannst du auf bums löschen. Habe ich runtergeladen.“ | 2026-11-07 | ✅ 2026-11-07 gelöscht, Ordner leer, bums danach 64 GB frei |
+| Overlay Player beim Öffnen einer Datei als App vorschlagen | 2026-11-07 | 🟡 in 1.3.0 gebaut, 25 Prüfungen im Emulator grün; wartet auf Sues „ausrollen“ |
+| Handy zeigt noch „Audio-Dateien hinzufügen“, Videos blass; Android meldete „App nicht installiert“ | 2026-11-07 | ✅ Update laut Sue danach durchgegangen; Grund des ersten Fehlschlags nicht mehr feststellbar. Ab 1.3.0 nennt die App den Grund |
+| Video in der App größer, Bedienung darüber und ausblendbar, Querformat; Hochformat zurück zur jetzigen Größe | 2026-11-07 | 🟡 in 1.3.0 gebaut, 26 Prüfungen im Emulator grün; wartet auf Sues „ausrollen“ |
 
 ## Aufgaben
+
+### 🟡 Video groß und quer, Bedienung darüber (Sue, 2026-11-07, Version 1.3.0)
+
+Wörtlich: „Jetzt scheint es geklappt zu haben. Das Video wird jetzt aber nur in der App ganz klein
+abgespielt. Kann ich das nicht größer innerhalb von der App sehen und den Bedienbutton da drüber,
+damit die so ausblenden, oder geht das nur so? Also, wenn ich auf Play drücke, wird es größer und
+geht vielleicht sogar in Querformat. Wenn ich zurück in das normale Hochkantformat gehe, geht es
+dann wieder in diese jetzige Größe zurück. Wäre das eine Möglichkeit?"
+
+Gebaut (2026-11-07):
+- **Vollbild** öffnet sich bei Play auf ein Video, beim Öffnen eines Videos aus einer anderen App,
+  beim Antippen des Bildes und beim Drehen des Handys ins Querformat.
+- Ein Querformat-Video dreht die Anzeige ins Querformat, auch wenn die automatische Drehung aus
+  ist. Ein Hochformat-Video bleibt hochkant.
+- **Bedienung über dem Bild:** Titel, 30 s und 10 s zurück, Play/Pause, 10 s und 30 s vor,
+  Zeitleiste zum Springen, Knopf „Vollbild verlassen“. Beim Abspielen verschwindet sie nach vier
+  Sekunden; Antippen zeigt sie wieder. Pausiert bleibt sie stehen.
+- **Zurück:** Handy aufrichten, Zurück-Taste oder Knopf. Danach die normale Ansicht.
+- Im Vollbild verschwinden die Leisten oben und unten; der Bildschirm bleibt an, solange das Video
+  läuft. Beim ersten Mal zeigt Android einmalig einen Hinweis zum Vollbild.
+- Auch die normale Ansicht ist größer: Das Bild darf 45 % der Bildschirmhöhe nutzen statt
+  höchstens 320 dp. Ein Symbol unten rechts zeigt, dass Antippen ins Vollbild führt.
+- Wechsel in eine andere App: weiterhin das kleine Fenster.
+
+Belege (Android 10, Emulator, `D:\Programme\OverlayPlayer\.scratch\test10.py`): 26 Prüfungen grün.
+Zusätzlich von Hand mit dem Lagesensor des Emulators: Handy quer gedreht → Vollbild, aufgerichtet →
+normale Ansicht; aus dem erzwungenen Querformat aufgerichtet → hochkant und normale Ansicht. Das
+Videobild im Vollbild ist über Farbzählung nachgewiesen (137 Farbstufen), nicht angesehen.
+
+### 🟡 Beim Öffnen einer Datei vorgeschlagen werden (Sue, 2026-11-07, Version 1.3.0)
+
+Wörtlich: „Wenn ich die Datei versuche zu öffnen, werden mir Apps vorgeschlagen, aber nicht der
+Overlay-Player. Gibt es eine Möglichkeit, das einzustellen, dass er dann direkt auch vorgeschlagen
+wird?"
+
+Ursache: Die App hatte sich bei Android nur als startbare App angemeldet, nicht als App, die Audio
+und Video öffnen kann.
+
+Gebaut (2026-11-07):
+- Android bietet den Player an bei **„Öffnen mit“** (Downloads, Dateimanager, Browser, Dropbox)
+  und bei **„Teilen“**, auch für mehrere Dateien. Nur bei Audio und Video.
+- Die Datei kommt in die Liste, wird ausgewählt und spielt sofort; ein Video öffnet im Vollbild.
+- Dauerhafter Zugriff, damit der Eintrag einen Neustart übersteht, in dieser Reihenfolge:
+  1. dauerhafte Freigabe der Quelle, wenn sie eine anbietet;
+  2. dieselbe Datei in Androids Medienverzeichnis (gleicher Name, gleiche Größe); dafür fragt die
+     App einmal nach dem Leserecht für Audio und Video;
+  3. sonst eine Kopie im App-Speicher (`Android/data/com.example.overlay_player/files/Importe`).
+     Vorher prüft die App den Platz; die Kopie entsteht als Teil-Datei und bekommt ihren Namen erst,
+     wenn sie vollständig ist. Der Fortschritt steht in Prozent unter dem Knopf. Entfernen aus der
+     Liste löscht die Kopie, das Original bleibt.
+- Dieselbe Datei zweimal öffnen ergibt keinen zweiten Eintrag und keine zweite Kopie.
+
+Belege (Android 10, Emulator, `D:\Programme\OverlayPlayer\.scratch\test9.py`): 25 Prüfungen grün,
+darunter: angeboten für `video/mp4` und `audio/mpeg`, nicht für Bilder; Video aus den Downloads mit
+Dateinamen in der Liste und spielt; Kopie vollständig (920.407 von 920.407 Bytes), keine Teil-Datei
+übrig; nach Neustart alle Einträge da, die Kopie spielt; Entfernen löscht die Kopie.
+
+Eigener Fehler, im Test gefunden und behoben: Eine nur kurz gültige Freigabe hätte einen Medien-Link
+in die Liste gebracht, der nach einem Neustart nicht mehr lesbar gewesen wäre. Medien-Links werden
+jetzt nur mit eigenem Leserecht übernommen, sonst wird kopiert.
+
+### ✅ „App nicht installiert“ beim Update (Sue, 2026-11-07)
+
+Wörtlich: „Es funktioniert aber noch nicht. Ich kann im Overlay Player immer noch keine
+Videodateien hinzufügen. Da steht als Button: „Audio-Dateien hinzufügen“, und die Videos, wenn ich
+die auswählen möchte, sind hier quasi blass.“ — und: „Vielleicht hat aber auch das erste Update
+nicht geklappt. Da steht: „App nicht installiert.““
+
+Befund: Der Knopftext gehört zur alten Version, das Update war also nicht installiert. Geprüft und
+ausgeschlossen: falscher Schlüssel (alle Update-Dateien und der Schlüssel vom März haben den
+Fingerabdruck `3656253a…549b`; die App prüft das vor dem Installieren und hätte mit eigener Meldung
+abgebrochen) und eine falsche Datei auf bums (`latest.json` nennt 1.2.0, Download über Tailscale
+vollständig). Kurz darauf meldete Sue, dass es geklappt hat. Den Grund des ersten Fehlschlags kann
+man nicht mehr feststellen; der alte Installationsweg bekam von Android keine Antwort.
+
+Für künftige Updates behoben (1.3.0): Die App installiert über Androids Installationssitzung und
+bekommt die Antwort zurück. Scheitert es, steht der Grund unten in der App, etwa „zu wenig freier
+Speicher auf dem Handy“, „von Android blockiert“ oder „abgebrochen“. Belege: Ein Abbruch im Emulator
+ergab „Update nicht installiert: abgebrochen (INSTALL_FAILED_ABORTED …)“; danach lief das Update von
+versionCode 5 auf 6 durch.
 
 ### ✅ Videos zum Herunterladen (Sue, 2026-11-07)
 
@@ -235,12 +319,21 @@ hielt die Lösch-Sperre zunächst an; nach Sues Freigabe liegt sein Inhalt seit 
 | Playlist spielt von selbst weiter, auch bei Audio | „Playlist anlegen“ heißt nacheinander abspielen; vorher hielt der Player nach jeder Datei an | Gering: eine Funktion (`onCompleted`) |
 | Version 1.2.0 statt 1.1.2 | Neue Funktion, nicht nur Fehlerbehebung | Keiner |
 | Reihenfolge: Update-Test zuletzt und auf Android 10 | Die Android-16-Testgeräte starteten nicht oder blieben gesperrt. Das Android-10-Gerät prüft zusätzlich den älteren Signaturweg | Keiner |
+| Play auf ein Video öffnet sofort das Vollbild | Sues Vorschlag „wenn ich auf Play drücke, wird es größer“ | Gering: eine Zeile (`vollbildGewuenscht`) |
+| Bedienung verschwindet nach vier statt drei Sekunden | Drei Sekunden waren im Test zu knapp, um nach dem Einblenden einen Knopf zu treffen | Gering: eine Zahl |
+| Nach „Vollbild verlassen“ bei quer gehaltenem Handy bleibt die Ansicht hochkant, bis das Handy aufgerichtet ist | Sonst spränge die Anzeige sofort wieder ins Vollbild | Gering |
+| Ohne Lagemeldung löst sich die Hochkant-Sperre nach zwei Sekunden | Sonst bliebe die Drehung dauerhaft gesperrt (im Emulator beobachtet, der den Sensor nur bei Änderung meldet) | Gering |
+| Kopie im App-Speicher nur als letzter Ausweg | Ein 1,5-GB-Video soll nicht doppelt Platz belegen | Gering; Kopien verschwinden mit der App |
+| App fragt beim „Öffnen mit“ einmal nach dem Leserecht für Audio und Video | Damit findet sie heruntergeladene Dateien ohne Kopie wieder | Gering; Ablehnen führt zur Kopie |
+| Updates über Installationssitzung statt Übergabe der Datei an den Installer | Nur so meldet Android den Grund eines Fehlschlags | Mittel; der alte Weg steht im Git-Verlauf |
+| Version 1.3.0 | Neue Funktionen | Keiner |
 
 ## Bewusst nicht gebaut
 
 - **Kein Overlay in der Größe veränderbar:** nicht gewünscht.
-- **Kein Vollbild für Videos und kein Bildschirm-Drehen in der App:** nicht gewünscht; das Bild in
-  der App ist höchstens 320 dp hoch.
+- ~~Kein Vollbild für Videos~~: seit 1.3.0 gebaut, auf Sues Wunsch vom 2026-11-07.
+- **Keine Gesten im Vollbild** (Wischen für Lautstärke oder Helligkeit, Doppeltippen zum Spulen):
+  nicht gewünscht; die Knöpfe decken 10 s und 30 s ab.
 - **Keine Knöpfe für nächste und vorige Datei:** nicht gewünscht; man wählt in der Liste.
 - **Kein automatischer Download ohne Rückfrage:** Android verlangt ohnehin die Bestätigung.
 
