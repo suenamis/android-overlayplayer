@@ -4,9 +4,12 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaMetadataRetriever
+import android.graphics.SurfaceTexture
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.Surface
+import android.view.TextureView
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
@@ -20,12 +23,15 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,6 +44,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Forward30
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -74,6 +81,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -103,6 +111,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        AudioPlayerService.setAppVisible(true)
+    }
+
+    override fun onStop() {
+        AudioPlayerService.setAppVisible(false)
+        super.onStop()
     }
 
     override fun onResume() {
@@ -189,44 +207,50 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        val showVideo = playback.uri != null && playback.videoWidth > 0 && playback.videoHeight > 0
+
         Column(
             modifier = modifier
                 .fillMaxSize()
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Icon(
-                imageVector = Icons.Filled.MusicNote,
-                contentDescription = null,
-                modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
+            if (showVideo) {
+                VideoView(playback.videoWidth.toFloat() / playback.videoHeight)
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.MusicNote,
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
 
-            Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-            Text(
-                text = "Overlay Player",
-                style = MaterialTheme.typography.headlineMedium
-            )
+                Text(
+                    text = "Overlay Player",
+                    style = MaterialTheme.typography.headlineMedium
+                )
 
-            Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(4.dp))
 
-            Text(
-                text = "Audiodateien im Hintergrund abspielen",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+                Text(
+                    text = "Audio und Video im Overlay abspielen",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
 
             // Add files button
             Button(onClick = {
                 requestPermissions(permissionLauncher)
-                filePickerLauncher.launch(arrayOf("audio/*"))
+                filePickerLauncher.launch(arrayOf("audio/*", "video/*"))
             }) {
                 Icon(Icons.Filled.Add, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Audiodateien hinzufügen")
+                Text("Audio oder Video hinzufügen")
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -269,8 +293,13 @@ class MainActivity : ComponentActivity() {
                                     .padding(horizontal = 12.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                val isVideo = remember(audioFile.uri) { isVideo(audioFile.uri) }
                                 Icon(
-                                    imageVector = if (isCurrentlyPlaying) Icons.Filled.PlayArrow else Icons.Filled.MusicNote,
+                                    imageVector = when {
+                                        isCurrentlyPlaying -> Icons.Filled.PlayArrow
+                                        isVideo -> Icons.Filled.Movie
+                                        else -> Icons.Filled.MusicNote
+                                    },
                                     contentDescription = null,
                                     modifier = Modifier.size(24.dp),
                                     tint = if (isCurrentlyPlaying)
@@ -422,7 +451,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 Spacer(modifier = Modifier.height(48.dp))
                 Text(
-                    text = "Keine Audiodateien geladen.\nTippe oben auf den Button, um Dateien hinzuzufügen.",
+                    text = "Noch keine Dateien geladen.\nTippe oben auf den Button, um Audios oder Videos hinzuzufügen.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
@@ -431,6 +460,44 @@ class MainActivity : ComponentActivity() {
             }
 
             UpdateRow()
+        }
+    }
+
+    /** Großes Bild in der App; beim Wechsel in eine andere App übernimmt das kleine Fenster. */
+    @Composable
+    private fun VideoView(aspect: Float) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 320.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            AndroidView(
+                factory = { context ->
+                    TextureView(context).apply {
+                        surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                            private var surface: Surface? = null
+
+                            override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+                                surface = Surface(texture).also { AudioPlayerService.setAppSurface(it) }
+                            }
+
+                            override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                                AudioPlayerService.setAppSurface(null)
+                                surface?.release()
+                                surface = null
+                                return true
+                            }
+
+                            override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {}
+                            override fun onSurfaceTextureUpdated(texture: SurfaceTexture) {}
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .aspectRatio(aspect, matchHeightConstraintsFirst = aspect < 1f)
+                    .clip(RoundedCornerShape(12.dp))
+            )
         }
     }
 
@@ -526,6 +593,13 @@ class MainActivity : ComponentActivity() {
             }
         playlistStore.save(restored.map { it.uri.toString() to it.name })
         return restored
+    }
+
+    private fun isVideo(uri: Uri): Boolean = try {
+        contentResolver.getType(uri)?.startsWith("video/") == true
+    } catch (e: Exception) {
+        e.printStackTrace()
+        false
     }
 
     private fun releaseFileAccess(uri: Uri) {
