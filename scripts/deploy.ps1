@@ -21,6 +21,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Vorbereitung fehlgeschlagen' }
     & scp.exe artifacts/deploy.tgz "${HostAlias}:/tmp/ea-overlay-player-deploy/deploy.tgz"
     if ($LASTEXITCODE -ne 0) { throw 'Uebertragung fehlgeschlagen' }
-    & ssh.exe $HostAlias 'cd /tmp/ea-overlay-player-deploy && tar -xzf deploy.tgz && sudo timeout 120 bash deploy.sh; result=$?; rm -rf /tmp/ea-overlay-player-deploy; exit $result'
-    if ($LASTEXITCODE -ne 0) { throw 'Ausrollen fehlgeschlagen' }
+    # Die Gesundheitspruefung meldet ihre Wiederholungen auf stderr, solange der Dienst startet.
+    # PowerShell 5.1 hielte das bei 'Stop' fuer einen Fehler; massgeblich ist der Rueckgabewert.
+    $ErrorActionPreference = 'Continue'
+    & ssh.exe $HostAlias 'cd /tmp/ea-overlay-player-deploy && tar -xzf deploy.tgz && sudo timeout 120 bash deploy.sh; result=$?; rm -rf /tmp/ea-overlay-player-deploy; exit $result' 2>&1 | ForEach-Object { "$_" }
+    $result = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($result -ne 0) { throw 'Ausrollen fehlgeschlagen' }
 } finally { Pop-Location }

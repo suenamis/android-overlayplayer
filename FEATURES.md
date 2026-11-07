@@ -19,9 +19,10 @@ bearbeitet, dann abgehakt. Diese Liste ist Sues Prüfstein, nicht Claudes Notizz
 | MP4-Videos von Dropbox und Telefon, Stelle merken, 10 s spulen, Playlist, direkt ausrollen | 2026-11-07 | ✅ Version 1.2.0 seit 2026-11-07 auf bums; Video spielt laut Sue am 2026-11-07 auf ihrem Handy |
 | Zwei Videos als Tailscale-Download-Link fürs Handy | 2026-11-07 | ✅ erledigt, Prüfsummen gleich |
 | „Die 2 Videos kannst du auf bums löschen. Habe ich runtergeladen.“ | 2026-11-07 | ✅ 2026-11-07 gelöscht, Ordner leer, bums danach 64 GB frei |
-| Overlay Player beim Öffnen einer Datei als App vorschlagen | 2026-11-07 | 🟡 in 1.3.0 gebaut, 25 Prüfungen im Emulator grün; wartet auf Sues „ausrollen“ |
+| Overlay Player beim Öffnen einer Datei als App vorschlagen | 2026-11-07 | 🟡 Version 1.3.0 seit 2026-11-07 auf bums; Test auf Sues Handy steht aus |
 | Handy zeigt noch „Audio-Dateien hinzufügen“, Videos blass; Android meldete „App nicht installiert“ | 2026-11-07 | ✅ Update laut Sue danach durchgegangen; Grund des ersten Fehlschlags nicht mehr feststellbar. Ab 1.3.0 nennt die App den Grund |
-| Video in der App größer, Bedienung darüber und ausblendbar, Querformat; Hochformat zurück zur jetzigen Größe | 2026-11-07 | 🟡 in 1.3.0 gebaut, 26 Prüfungen im Emulator grün; wartet auf Sues „ausrollen“ |
+| Video in der App größer, Bedienung darüber und ausblendbar, Querformat; Hochformat zurück zur jetzigen Größe | 2026-11-07 | 🟡 Version 1.3.0 seit 2026-11-07 auf bums; Test auf Sues Handy steht aus |
+| „Ummmmeerrrr aaussroolllenn uunnd ppussheenn“ (1.3.0 ausrollen, GitHub pushen) | 2026-11-07 | ✅ 2026-11-07: 1.3.0 auf bums, Download über Tailscale mit gleicher Prüfsumme (`6f7bc0a0…`); GitHub-Stand gepusht |
 
 ## Aufgaben
 
@@ -289,6 +290,10 @@ neuen Ort erfolgreich. Das alte Original `C:\Users\s-has\AndroidStudioProjects\O
 hielt die Lösch-Sperre zunächst an; nach Sues Freigabe liegt sein Inhalt seit 2026-11-02 im Papierkorb.
 
 ## Nebenbei behobene Fehler
+
+- Das Ausrollen meldete am 2026-11-07 einen Fehler, obwohl es geklappt hatte: PowerShell 5.1 wertete
+  die Wiederholungsmeldungen der Gesundheitsprüfung als Abbruch. `scripts/deploy.ps1` prüft jetzt nur
+  den Rückgabewert; zweites Ausrollen damit sauber durchgelaufen.
 
 - App und Overlay zeigten nach dem Wiederöffnen oder beim Pausieren im Overlay unterschiedliche
   Stände. Die App liest den Stand jetzt direkt vom Dienst.
