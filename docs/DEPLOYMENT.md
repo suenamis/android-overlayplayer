@@ -18,6 +18,13 @@
    ⚠ Nur auf Sues Ansage.
 4. In der App „Auf Updates prüfen“. Beim Öffnen sucht sie von selbst, höchstens alle 15 Minuten.
 
+## Dateien fürs Handy bereitstellen
+
+`powershell -File D:\Programme\OverlayPlayer\scripts\dateien-bereitstellen.ps1 -Files "<Pfad1>","<Pfad2>"`
+legt Audio- und Videodateien nach `/srv/overlay-player/dateien/`. Sie erscheinen unter
+`https://bums.tail1c1957.ts.net:5241/dateien/` (nur Tailnet) zum Herunterladen. Ausgeliefert
+werden nur `.mp4`, `.mp3`, `.m4a` und `.wav` aus diesem Ordner.
+
 ## Was die App prüft
 
 Nur HTTPS auf dem fest eingebauten Host, keine Weiterleitungen, nur der vorgesehene APK-Pfad,

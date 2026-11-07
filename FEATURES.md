@@ -17,8 +17,30 @@ bearbeitet, dann abgehakt. Diese Liste ist Sues Prüfstein, nicht Claudes Notizz
 | Importierte Datei zeigt Buchstaben-Zahlen-Kombination statt Dateiname | 2026-11-02 | 🟡 Version 1.1.1 seit 2026-11-02 auf bums, Test auf Sues Handy steht aus |
 | Kosten einer Veröffentlichung im Play Store | 2026-11-02 | ✅ beantwortet |
 | MP4-Videos von Dropbox und Telefon, Stelle merken, 10 s spulen, Playlist, direkt ausrollen | 2026-11-07 | 🟡 Version 1.2.0 seit 2026-11-07 auf bums (Download mit passender Prüfsumme); Dropbox und echtes Handy ungeprüft |
+| Zwei Videos als Tailscale-Download-Link fürs Handy | 2026-11-07 | ✅ erledigt, Prüfsummen gleich |
 
 ## Aufgaben
+
+### ✅ Videos zum Herunterladen (Sue, 2026-11-07)
+
+Wörtlich: „@"E:\Dropbox\_Exchange\Christo Showhypnose ｜ Die Unfassbaren.mp4"
+@"E:\Dropbox\_Exchange\SchifHypno 1.mp4" Kannst du mir dann diese beiden Videos als
+Tailscale-Link zum Download für Android zur Verfügung stellen? Ich krieg die sonst irgendwie nicht
+aufs Telefon. Wäre super, wenn du das ohne Rückfrage erledigst."
+
+Gebaut am 2026-11-07: Der Update-Dienst auf bums hat eine Seite
+`https://bums.tail1c1957.ts.net:5241/dateien/` mit Download-Links (nur im Tailnet). Er liefert
+nur Audio- und Videodateien, die in `/srv/overlay-player/dateien/` liegen, kein Pfad aus der
+Adresse, mit Teilabrufen, damit ein abgebrochener Download weiterlaufen kann. Neue Dateien legt
+`D:\Programme\OverlayPlayer\scripts\dateien-bereitstellen.ps1 -Files <Pfade>` ab.
+Übertragen: beide Videos, 1.498 MB und 1.066 MB, in 200 Sekunden; SHA-256 auf bums und am PC
+gleich. Claude hat die Videos nicht geöffnet, nur kopiert. Auf bums sind danach noch 60 GB frei
+(97 % belegt).
+
+Entscheidung ohne Rückfrage: Bereitstellung im vorhandenen Update-Dienst statt in einem neuen
+Dienst mit neuem Port. Grund: kein zusätzlicher Port, dieselbe Adresse wie für die App, derselbe
+Schutz (nur Tailnet). Umwerfen kostet wenig: die Route in `server/update_server.py` entfernen.
+Die Dateien bleiben liegen, bis Sue sie nicht mehr braucht; Löschen geht nur auf ihre Ansage.
 
 ### 🟡 Videos (Sue, 2026-11-07)
 

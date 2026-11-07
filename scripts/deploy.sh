@@ -19,6 +19,7 @@ fi
 
 install -d -o root -g overlay-player -m 750 "$target" "$target/server"
 install -d -o root -g overlay-player -m 755 "$target/releases"
+install -d -o root -g overlay-player -m 750 "$target/dateien"
 python3 "$src/scripts/publish-release.py" "$src/artifacts" "$target/releases"
 chgrp overlay-player "$target/releases/"*.apk "$target/releases/latest.json"
 install -o root -g overlay-player -m 640 "$src/server/update_server.py" "$target/server/update_server.py"
