@@ -2,7 +2,28 @@ package com.example.overlay_player
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.view.OrientationEventListener
+import android.view.WindowManager
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material3.Slider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import kotlinx.coroutines.delay
 import android.media.MediaMetadataRetriever
 import android.graphics.SurfaceTexture
 import android.net.Uri
@@ -71,6 +92,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
@@ -93,15 +116,27 @@ import java.util.Date
 
 data class AudioFile(val uri: Uri, val name: String)
 
+/** Ausrichtung, die das Vollbild gerade erzwingt. */
+private enum class Sperre { KEINE, QUER, HOCH }
+
+private fun istHoch(grad: Int) = grad <= 25 || grad >= 335 || grad in 155..205
+private fun istQuer(grad: Int) = grad in 65..115 || grad in 245..295
+
 class MainActivity : ComponentActivity() {
 
     private lateinit var playlistStore: PlaylistStore
     private lateinit var updates: UpdateController
+    private lateinit var uebernahme: DateiUebernahme
+
+    /** Dateien aus „Öffnen mit“ oder „Teilen“, die noch in die Liste müssen. */
+    private val eingang = mutableStateListOf<Uri>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         playlistStore = PlaylistStore(this)
         updates = UpdateController(applicationContext, lifecycleScope)
+        uebernahme = DateiUebernahme(applicationContext)
+        if (savedInstanceState == null) eingang.addAll(eingehendeDateien(intent))
         enableEdgeToEdge()
         Handler(Looper.getMainLooper()).postDelayed(::writeDiagnostics, DIAGNOSTICS_DELAY_MS)
         setContent {
@@ -111,6 +146,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        eingang.addAll(eingehendeDateien(intent))
     }
 
     override fun onStart() {
@@ -143,6 +184,8 @@ class MainActivity : ComponentActivity() {
         val isPlaying = playback.isPlaying
         val playingIndex = audioFiles.indexOfFirst { it.uri == playback.uri }
         var renaming by remember { mutableStateOf<AudioFile?>(null) }
+        // Play bei einem Video öffnet das Vollbild, sobald das Bild da ist.
+        var vollbildGewuenscht by remember { mutableStateOf(false) }
 
         fun select(index: Int) {
             selectedIndex = index
@@ -161,6 +204,54 @@ class MainActivity : ComponentActivity() {
         val permissionLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) { /* permissions handled */ }
+
+        var uebernahmeText by remember { mutableStateOf<String?>(null) }
+        var rechteGefragt by remember { mutableStateOf(false) }
+        val medienRechteLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { rechteGefragt = true }
+
+        // „Öffnen mit“ / „Teilen“: Datei in die Liste, auswählen und abspielen.
+        LaunchedEffect(Unit) {
+            snapshotFlow { eingang.size to rechteGefragt }.collect { (anzahl, gefragt) ->
+                if (anzahl == 0) return@collect
+                // Mit Medien-Leserechten findet sich eine heruntergeladene Datei ohne Kopie wieder.
+                val fehlend = fehlendeRechte()
+                if (!gefragt && fehlend.isNotEmpty()) {
+                    medienRechteLauncher.launch(fehlend.toTypedArray())
+                    return@collect
+                }
+                val uris = eingang.toList()
+                eingang.clear()
+                var zuletzt = -1
+                for (uri in uris) {
+                    uebernahmeText = "Übernehme Datei …"
+                    when (val e = uebernahme.uebernehmen(uri) { p -> uebernahmeText = "Kopiere Datei in die App: $p %" }) {
+                        is DateiUebernahme.Ergebnis.Fertig -> {
+                            val name = e.name?.takeUnless { siehtWieKennungAus(it) } ?: getFileName(e.uri)
+                            var index = audioFiles.indexOfFirst { it.uri == e.uri }
+                            if (index < 0) {
+                                audioFiles.add(AudioFile(e.uri, name))
+                                index = audioFiles.size - 1
+                            }
+                            zuletzt = index
+                        }
+                        is DateiUebernahme.Ergebnis.Fehler ->
+                            Toast.makeText(this@MainActivity, e.meldung, Toast.LENGTH_LONG).show()
+                    }
+                }
+                uebernahmeText = null
+                if (zuletzt >= 0) {
+                    savePlaylist()
+                    select(zuletzt)
+                    val datei = audioFiles[zuletzt]
+                    if (checkOverlayPermission()) {
+                        vollbildGewuenscht = isVideo(datei.uri)
+                        startAudioService(datei.uri, datei.name)
+                    }
+                }
+            }
+        }
 
         val filePickerLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.OpenMultipleDocuments()
@@ -208,6 +299,120 @@ class MainActivity : ComponentActivity() {
         }
 
         val showVideo = playback.uri != null && playback.videoWidth > 0 && playback.videoHeight > 0
+        val aspect = if (showVideo) playback.videoWidth.toFloat() / playback.videoHeight else 16f / 9f
+
+        // Vollbild: per Antippen, per Play oder durch Drehen ins Querformat.
+        // Zurück ins Hochformat drehen führt wieder zur normalen Ansicht.
+        val quer = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+        var vollbild by remember { mutableStateOf(false) }
+        var gesperrt by remember { mutableStateOf(Sperre.KEINE) }
+        var querGesehen by remember { mutableStateOf(false) }
+        // Letzte gemeldete Lage in Grad; der Sensor meldet sich nur bei Änderungen.
+        var letzteLage by remember { mutableIntStateOf(-1) }
+
+        fun sperren(s: Sperre) {
+            android.util.Log.i("OverlayVollbild", "Ausrichtung: $s")
+            gesperrt = s
+            querGesehen = letzteLage >= 0 && istQuer(letzteLage)
+            requestedOrientation = when (s) {
+                Sperre.QUER -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                Sperre.HOCH -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                Sperre.KEINE -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
+        }
+        fun vollbildAn() {
+            vollbild = true
+            if (aspect > 1f && !quer) sperren(Sperre.QUER)
+        }
+        fun vollbildAus() {
+            vollbild = false
+            // Liegt das Handy noch quer, bleibt die Ansicht hochkant, bis es aufgerichtet wird.
+            sperren(if (quer) Sperre.HOCH else Sperre.KEINE)
+        }
+
+        LaunchedEffect(showVideo) {
+            if (showVideo && vollbildGewuenscht) vollbildAn()
+            if (showVideo) vollbildGewuenscht = false
+            if (!showVideo && (vollbild || gesperrt != Sperre.KEINE)) {
+                vollbild = false
+                sperren(Sperre.KEINE)
+            }
+        }
+
+        // Wie das Handy wirklich gehalten wird, auch während die Anzeige gesperrt ist.
+        DisposableEffect(Unit) {
+            val lage = object : OrientationEventListener(this@MainActivity) {
+                override fun onOrientationChanged(grad: Int) {
+                    if (grad == ORIENTATION_UNKNOWN) return
+                    letzteLage = grad
+                    val hoch = istHoch(grad)
+                    val liegtQuer = istQuer(grad)
+                    when (gesperrt) {
+                        Sperre.QUER -> {
+                            if (liegtQuer) querGesehen = true
+                            if (querGesehen && hoch) {
+                                vollbild = false
+                                sperren(Sperre.KEINE)
+                            }
+                        }
+                        Sperre.HOCH -> if (hoch) sperren(Sperre.KEINE)
+                        Sperre.KEINE -> {}
+                    }
+                }
+            }
+            lage.enable()
+            onDispose { lage.disable() }
+        }
+
+        // Die Hochkant-Sperre löst sich, sobald das Handy aufrecht ist. Ist es das schon, sofort;
+        // ohne jede Lagemeldung (kein Sensor, Handy liegt flach) nach zwei Sekunden.
+        LaunchedEffect(gesperrt) {
+            if (gesperrt == Sperre.HOCH) {
+                if (letzteLage >= 0 && istHoch(letzteLage)) {
+                    sperren(Sperre.KEINE)
+                    return@LaunchedEffect
+                }
+                delay(2_000)
+                if (gesperrt == Sperre.HOCH && (letzteLage < 0 || istHoch(letzteLage))) sperren(Sperre.KEINE)
+            }
+        }
+
+        val imVollbild = showVideo && (vollbild || (quer && gesperrt != Sperre.HOCH))
+
+        // Im Vollbild: Leisten ausblenden, Bildschirm bleibt an, solange das Video läuft.
+        DisposableEffect(imVollbild, isPlaying) {
+            val leisten = WindowCompat.getInsetsController(window, window.decorView)
+            if (imVollbild) {
+                leisten.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                leisten.hide(WindowInsetsCompat.Type.systemBars())
+            } else {
+                leisten.show(WindowInsetsCompat.Type.systemBars())
+            }
+            if (imVollbild && isPlaying) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+            onDispose { }
+        }
+
+        if (imVollbild) {
+            BackHandler { vollbildAus() }
+            VollbildVideo(
+                aspect = aspect,
+                titel = audioFiles.getOrNull(playingIndex)?.name ?: "",
+                isPlaying = isPlaying,
+                onPlayPause = {
+                    val datei = audioFiles.getOrNull(playingIndex)
+                    when {
+                        isPlaying -> sendAction(AudioPlayerService.ACTION_PAUSE)
+                        datei != null -> startAudioService(datei.uri, datei.name)
+                    }
+                },
+                onSchliessen = { vollbildAus() }
+            )
+            return
+        }
 
         Column(
             modifier = modifier
@@ -216,7 +421,7 @@ class MainActivity : ComponentActivity() {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (showVideo) {
-                VideoView(playback.videoWidth.toFloat() / playback.videoHeight)
+                VideoView(aspect) { vollbildAn() }
             } else {
                 Icon(
                     imageVector = Icons.Filled.MusicNote,
@@ -251,6 +456,15 @@ class MainActivity : ComponentActivity() {
                 Icon(Icons.Filled.Add, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Audio oder Video hinzufügen")
+            }
+
+            uebernahmeText?.let {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -337,6 +551,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                         audioFiles.removeAt(index)
                                         releaseFileAccess(audioFile.uri)
+                                        uebernahme.kopieLoeschen(audioFile.uri)
                                         savePlaylist()
                                         select(
                                             when {
@@ -405,6 +620,7 @@ class MainActivity : ComponentActivity() {
                             } else {
                                 // Play selected file (new or different)
                                 if (!checkOverlayPermission()) return@FilledTonalButton
+                                vollbildGewuenscht = isVideo(selected.uri)
                                 startAudioService(selected.uri, selected.name)
                             }
                         },
@@ -463,15 +679,186 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Großes Bild in der App; beim Wechsel in eine andere App übernimmt das kleine Fenster. */
+    /** Bild in der App, Tippen öffnet das Vollbild; in anderen Apps übernimmt das kleine Fenster. */
     @Composable
-    private fun VideoView(aspect: Float) {
+    private fun VideoView(aspect: Float, onVollbild: () -> Unit) {
+        val maxHoehe = (LocalConfiguration.current.screenHeightDp * 0.45f).dp
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 320.dp),
+                .heightIn(max = maxHoehe),
             contentAlignment = Alignment.Center
         ) {
+            Box(
+                modifier = Modifier
+                    .aspectRatio(aspect, matchHeightConstraintsFirst = aspect < 1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(onClickLabel = "Vollbild") { onVollbild() }
+            ) {
+                VideoFlaeche(Modifier.fillMaxSize())
+                Icon(
+                    Icons.Filled.Fullscreen,
+                    contentDescription = "Vollbild",
+                    tint = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(6.dp)
+                        .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
+                        .padding(4.dp)
+                        .size(28.dp)
+                )
+            }
+        }
+    }
+
+    /**
+     * Vollbild: Bild so groß wie möglich, Bedienung darüber. Tippen blendet sie ein und aus,
+     * beim Abspielen verschwindet sie nach vier Sekunden von selbst.
+     */
+    @Composable
+    private fun VollbildVideo(
+        aspect: Float,
+        titel: String,
+        isPlaying: Boolean,
+        onPlayPause: () -> Unit,
+        onSchliessen: () -> Unit
+    ) {
+        var bedienung by remember { mutableStateOf(true) }
+        var beruehrt by remember { mutableIntStateOf(0) }
+        var position by remember { mutableIntStateOf(0) }
+        var laenge by remember { mutableIntStateOf(0) }
+        var ziehen by remember { mutableStateOf<Float?>(null) }
+
+        LaunchedEffect(Unit) {
+            while (true) {
+                val (p, l) = AudioPlayerService.progress()
+                position = p
+                laenge = l
+                delay(500)
+            }
+        }
+        LaunchedEffect(bedienung, beruehrt, isPlaying, ziehen) {
+            if (bedienung && isPlaying && ziehen == null) {
+                delay(4_000)
+                bedienung = false
+            }
+        }
+        fun tippen(aktion: () -> Unit) {
+            beruehrt++
+            aktion()
+        }
+
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClickLabel = "Bedienung ein- oder ausblenden"
+                ) { bedienung = !bedienung },
+            contentAlignment = Alignment.Center
+        ) {
+            val breiterAlsBild = maxWidth / maxHeight > aspect
+            VideoFlaeche(Modifier.aspectRatio(aspect, matchHeightConstraintsFirst = breiterAlsBild))
+
+            AnimatedVisibility(visible = bedienung, enter = fadeIn(), exit = fadeOut()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.4f))
+                        .safeDrawingPadding()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().align(Alignment.TopStart),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = titel,
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = onSchliessen) {
+                            Icon(Icons.Filled.FullscreenExit, contentDescription = "Vollbild verlassen",
+                                tint = Color.White, modifier = Modifier.size(32.dp))
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.align(Alignment.Center),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = { tippen { sendAction(AudioPlayerService.ACTION_BACKWARD_30) } },
+                            modifier = Modifier.size(56.dp)) {
+                            Icon(Icons.Filled.Replay30, contentDescription = "30s zurück",
+                                tint = Color.White, modifier = Modifier.size(36.dp))
+                        }
+                        IconButton(onClick = { tippen { sendAction(AudioPlayerService.ACTION_BACKWARD_10) } },
+                            modifier = Modifier.size(64.dp)) {
+                            Icon(Icons.Filled.Replay10, contentDescription = "10s zurück",
+                                tint = Color.White, modifier = Modifier.size(44.dp))
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        IconButton(onClick = { tippen(onPlayPause) }, modifier = Modifier.size(80.dp)) {
+                            Icon(
+                                if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                contentDescription = if (isPlaying) "Pause" else "Play",
+                                tint = Color.White,
+                                modifier = Modifier.size(64.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        IconButton(onClick = { tippen { sendAction(AudioPlayerService.ACTION_FORWARD_10) } },
+                            modifier = Modifier.size(64.dp)) {
+                            Icon(Icons.Filled.Forward10, contentDescription = "10s vor",
+                                tint = Color.White, modifier = Modifier.size(44.dp))
+                        }
+                        IconButton(onClick = { tippen { sendAction(AudioPlayerService.ACTION_FORWARD_30) } },
+                            modifier = Modifier.size(56.dp)) {
+                            Icon(Icons.Filled.Forward30, contentDescription = "30s vor",
+                                tint = Color.White, modifier = Modifier.size(36.dp))
+                        }
+                    }
+
+                    if (laenge > 0) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val anzeige = ziehen?.toInt() ?: position
+                            Text(zeit(anzeige), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                            Slider(
+                                value = (ziehen ?: position.toFloat()).coerceIn(0f, laenge.toFloat()),
+                                onValueChange = { ziehen = it },
+                                onValueChangeFinished = {
+                                    ziehen?.let { AudioPlayerService.seekTo(it.toInt()); position = it.toInt() }
+                                    ziehen = null
+                                    beruehrt++
+                                },
+                                valueRange = 0f..laenge.toFloat(),
+                                modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
+                            )
+                            Text(zeit(laenge), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun zeit(ms: Int): String {
+        val s = ms / 1000
+        return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60)
+        else "%d:%02d".format(s / 60, s % 60)
+    }
+
+    /** Die Fläche, auf die der Dienst das Bild zeichnet. */
+    @Composable
+    private fun VideoFlaeche(modifier: Modifier) {
             AndroidView(
                 factory = { context ->
                     TextureView(context).apply {
@@ -483,7 +870,7 @@ class MainActivity : ComponentActivity() {
                             }
 
                             override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
-                                AudioPlayerService.setAppSurface(null)
+                                surface?.let { AudioPlayerService.releaseAppSurface(it) }
                                 surface?.release()
                                 surface = null
                                 return true
@@ -494,11 +881,8 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 },
-                modifier = Modifier
-                    .aspectRatio(aspect, matchHeightConstraintsFirst = aspect < 1f)
-                    .clip(RoundedCornerShape(12.dp))
+                modifier = modifier
             )
-        }
     }
 
     @Composable
@@ -509,7 +893,7 @@ class MainActivity : ComponentActivity() {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = updates.status.ifEmpty { "Version ${BuildConfig.VERSION_NAME}" },
+                text = UpdateMeldung.fehler ?: updates.status.ifEmpty { "Version ${BuildConfig.VERSION_NAME}" },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
@@ -637,27 +1021,27 @@ class MainActivity : ComponentActivity() {
     private fun requestPermissions(
         launcher: androidx.activity.result.ActivityResultLauncher<Array<String>>
     ) {
-        val permissions = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_AUDIO)
-                != PackageManager.PERMISSION_GRANTED
-            ) {
-                permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
-            }
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED
-            ) {
-                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        } else {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
-                != PackageManager.PERMISSION_GRANTED
-            ) {
-                permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            }
+        val permissions = fehlendeRechte().toMutableList()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
         if (permissions.isNotEmpty()) {
             launcher.launch(permissions.toTypedArray())
+        }
+    }
+
+    /** Leserechte für Audio und Video, die noch fehlen. */
+    private fun fehlendeRechte(): List<String> {
+        val noetig = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            listOf(Manifest.permission.READ_MEDIA_AUDIO, Manifest.permission.READ_MEDIA_VIDEO)
+        } else {
+            listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        return noetig.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
     }
 

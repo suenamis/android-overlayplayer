@@ -1,7 +1,10 @@
 package com.example.overlay_player
 
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.content.pm.Signature
@@ -80,6 +83,46 @@ object UpdateRules {
     }
 }
 
+/** Antwort von Androids Installer, für die Anzeige in der App. */
+object UpdateMeldung {
+    var fehler by mutableStateOf<String?>(null)
+}
+
+/** Empfängt Androids Antwort auf die Installationssitzung. */
+class UpdateErgebnis : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            val bestaetigen = if (Build.VERSION.SDK_INT >= 33) {
+                intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+            } else {
+                @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_INTENT)
+            }
+            bestaetigen?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)?.let(context::startActivity)
+            return
+        }
+        if (status == PackageInstaller.STATUS_SUCCESS) return
+        val grund = text(status)
+        val detail = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+        android.util.Log.w("OverlayUpdate", "Installation gescheitert: $status $detail")
+        UpdateMeldung.fehler = "Update nicht installiert: $grund" + (detail?.let { " ($it)" } ?: "")
+    }
+
+    companion object {
+        const val ACTION = "com.example.overlay_player.UPDATE_ERGEBNIS"
+
+        fun text(status: Int): String = when (status) {
+            PackageInstaller.STATUS_FAILURE_ABORTED -> "abgebrochen"
+            PackageInstaller.STATUS_FAILURE_BLOCKED -> "von Android blockiert, etwa durch Play Protect oder den Geräteschutz"
+            PackageInstaller.STATUS_FAILURE_CONFLICT -> "Konflikt mit der installierten App"
+            PackageInstaller.STATUS_FAILURE_INCOMPATIBLE -> "passt nicht zu diesem Gerät"
+            PackageInstaller.STATUS_FAILURE_INVALID -> "Update-Datei ungültig"
+            PackageInstaller.STATUS_FAILURE_STORAGE -> "zu wenig freier Speicher auf dem Handy"
+            else -> "unbekannter Grund"
+        }
+    }
+}
+
 /** Sucht, lädt, prüft und übergibt Updates an Android; die Installation bestätigt Android. */
 class UpdateController(private val context: Context, private val scope: CoroutineScope) {
     private val prefs = context.getSharedPreferences(
@@ -103,6 +146,7 @@ class UpdateController(private val context: Context, private val scope: Coroutin
         if (checking || downloading || offer != null) return
         if (automatic && SystemClock.elapsedRealtime() < nextAutomaticCheck) return
         checking = true
+        if (!automatic) UpdateMeldung.fehler = null
         nextAutomaticCheck = SystemClock.elapsedRealtime() + RETRY_MS
         status = "Suche nach Updates …"
         scope.launch {
@@ -188,7 +232,6 @@ class UpdateController(private val context: Context, private val scope: Coroutin
                 needsInstallPermission = true
                 return
             }
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", apkFile)
             prefs.edit().remove(KEY_PENDING).apply()
             status = "Installation in Android bestätigen"
             // Die Installation beendet den Prozess; die Hörstelle muss vorher gesichert sein.
@@ -198,17 +241,45 @@ class UpdateController(private val context: Context, private val scope: Coroutin
                         .setAction(AudioPlayerService.ACTION_SAVE_POSITION)
                 )
             }
-            context.startActivity(
-                Intent(Intent.ACTION_VIEW)
-                    .setDataAndType(uri, "application/vnd.android.package-archive")
-                    .addFlags(
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
-                    )
-            )
+            // Über eine Installationssitzung meldet Android zurück, WARUM etwas scheitert.
+            // Der frühere Weg (Datei an den Installer geben) zeigte nur „App nicht installiert“.
+            UpdateMeldung.fehler = null
+            installiereUeberSitzung()
         } catch (e: Exception) {
             e.printStackTrace()
             prefs.edit().remove(KEY_PENDING).apply()
             status = "Installation gestoppt: ${e.message}"
+        }
+    }
+
+    private fun installiereUeberSitzung() {
+        val installer = context.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+            .apply {
+                setAppPackageName(context.packageName)
+                setSize(apkFile.length())
+            }
+        val id = installer.createSession(params)
+        installer.openSession(id).use { sitzung ->
+            try {
+                FileInputStream(apkFile).use { input ->
+                    sitzung.openWrite("overlay-player.apk", 0, apkFile.length()).use { output ->
+                        input.copyTo(output, 1 shl 16)
+                        sitzung.fsync(output)
+                    }
+                }
+                val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
+                val antwort = PendingIntent.getBroadcast(
+                    context, id,
+                    Intent(context, UpdateErgebnis::class.java).setAction(UpdateErgebnis.ACTION),
+                    flags
+                )
+                sitzung.commit(antwort.intentSender)
+            } catch (e: Exception) {
+                sitzung.abandon()
+                throw e
+            }
         }
     }
 

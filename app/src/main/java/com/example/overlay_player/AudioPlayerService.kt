@@ -97,6 +97,37 @@ class AudioPlayerService : Service() {
             appSurface = surface
             running?.applySurface()
         }
+
+        /** Für die Zeitleiste im Vollbild: Position und Länge in ms, (0, 0) ohne Wiedergabe. */
+        fun progress(): Pair<Int, Int> {
+            val service = running ?: return 0 to 0
+            if (service.isLoading) return 0 to 0
+            val player = service.mediaPlayer ?: return 0 to 0
+            return try {
+                player.currentPosition to player.duration.coerceAtLeast(0)
+            } catch (e: IllegalStateException) {
+                0 to 0
+            }
+        }
+
+        fun seekTo(ms: Int) {
+            val service = running ?: return
+            if (service.isLoading) return
+            service.mediaPlayer?.let {
+                try {
+                    it.seekTo(ms.coerceIn(0, it.duration))
+                    service.updateOverlayProgress()
+                    service.savePosition()
+                } catch (e: IllegalStateException) {
+                    e.printStackTrace()
+                }
+            }
+        }
+
+        /** Gibt nur die eigene Fläche frei; beim Wechsel ins Vollbild steht die neue womöglich schon. */
+        fun releaseAppSurface(surface: Surface) {
+            if (appSurface === surface) setAppSurface(null)
+        }
     }
 
     private var mediaPlayer: MediaPlayer? = null
