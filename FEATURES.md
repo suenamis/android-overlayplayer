@@ -16,7 +16,7 @@ bearbeitet, dann abgehakt. Diese Liste ist Sues Prüfstein, nicht Claudes Notizz
 | Installationslink über bums per Tailscale | 2026-11-02 | ✅ erledigt, Link nachgeprüft |
 | Importierte Datei zeigt Buchstaben-Zahlen-Kombination statt Dateiname | 2026-11-02 | 🟡 Version 1.1.1 seit 2026-11-02 auf bums, Test auf Sues Handy steht aus |
 | Kosten einer Veröffentlichung im Play Store | 2026-11-02 | ✅ beantwortet |
-| MP4-Videos von Dropbox und Telefon, Stelle merken, 10 s spulen, Playlist, direkt ausrollen | 2026-11-07 | 🟡 Version 1.2.0 gebaut, im Emulator getestet und ausgerollt; Dropbox und echtes Handy ungeprüft |
+| MP4-Videos von Dropbox und Telefon, Stelle merken, 10 s spulen, Playlist, direkt ausrollen | 2026-11-07 | 🟡 Version 1.2.0 seit 2026-11-07 auf bums (Download mit passender Prüfsumme); Dropbox und echtes Handy ungeprüft |
 
 ## Aufgaben
 
